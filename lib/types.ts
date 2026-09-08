@@ -123,3 +123,52 @@ export interface InventoryEquipment {
   created_by: string | null;
   profiles?: { name: string } | null;
 }
+
+// ============================================================================
+// Inventory Linen — matrix per item × location (room or storage)
+// ============================================================================
+export interface InventoryLinen {
+  id: string;
+  item_name: string;
+  location: string; // room number (e.g. '301') or storage name (e.g. 'Linen Room', 'Gudang 3C')
+  count: number;
+  period_month: number;
+  period_year: number;
+  remarks: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  profiles?: { name: string } | null;
+}
+
+// Default linen items (matching the template's first 7 rows)
+export const DEFAULT_LINEN_ITEMS = [
+  'Bath Towel',
+  'Bath Mat',
+  'Bed Sheet twin A',
+  'Bed Sheet twin C',
+  'Bed sheet Karet',
+  'Bed Sheet King',
+  'Pillow case',
+] as const;
+
+// Default storage locations (Block 1 of the template)
+export const DEFAULT_LINEN_STORAGES = [
+  'Linen Room',
+  'Gudang 3C',
+  'Gudang 5C',
+  'Gudang 4A',
+  'Office',
+  'OOO',
+] as const;
+
+// Room groups (Blocks 2-9 of the template)
+export const LINEN_ROOM_GROUPS: { label: string; rooms: string[] }[] = [
+  { label: 'Section C Floor 2', rooms: ['201', '202', '203', '204', '205', '206', '207', '208', '209', '210', '211', '212', '213'] },
+  { label: 'Section C Floor 3', rooms: ['312', '313', '314', '315', '316', '317', '318', '319', '320', '321', '322', '323', '324'] },
+  { label: 'Section C Floor 4', rooms: ['412', '413', '414', '415', '416', '417', '418', '419', '420', '421', '422', '423', '424'] },
+  { label: 'Section C Floor 5', rooms: ['508', '509', '510', '511', '512', '513', '514', '515', '516', '517', '518', '519', '520'] },
+  { label: 'Section A Floor 3', rooms: ['301', '302', '303', '304', '305', '306', '307', '308', '309', '310', '311'] },
+  { label: 'Section A Floor 4', rooms: ['401', '402', '403', '404', '405', '406', '407', '408', '409', '410', '411'] },
+  { label: 'Section A Floor 5', rooms: ['501', '502', '503', '504', '505', '506', '507'] },
+];

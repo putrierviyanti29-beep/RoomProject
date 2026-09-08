@@ -948,4 +948,154 @@ export async function syncEquipmentToSheet(params: {
   }
 }
 
+/**
+ * Syncs Inventory Linen data into a sheet (duplicated monthly template).
+ *
+ * Linen template structure (from inspection):
+ * - 9 horizontal blocks, each with: ITEMS column + N room/storage columns + Remarks
+ * - Block 1 (col B-J): Storages — ROOM, Gudang 3C, Gudang 5C, Gudang 4A, Office, OOO
+ * - Block 2 (col L-AA): Rooms 201-213 (Section C Floor 2)
+ * - Block 3 (col AD-AS): Rooms 312-324 (Section C Floor 3)
+ * - Block 4 (col AV-BR): Rooms 412-424 + 331-337
+ * - Block 5 (col BU-CJ): Rooms 412-424 (duplicate)
+ * - Block 6 (col CL-DA): Rooms 508-520 (Section C Floor 5)
+ * - Block 7 (col DC-DP): Rooms 301-311 (Section A Floor 3)
+ * - Block 8 (col DR-EE): Rooms 401-411 (Section A Floor 4)
+ * - Block 9 (col EG-EP): Rooms 501-507 (Section A Floor 5)
+ * - Row 4: Header row (ITEMS, room numbers, Remarks)
+ * - Row 5: Section label (e.g. "Bed Room")
+ * - Row 6+: Data rows (1 row per linen item)
+ *
+ * Strategy: read the sheet, find each block by scanning row 4 for 'ITEMS' columns,
+ * then for each (item, location) pair in DB, find the matching row (by item_name
+ * in column B/L/AD/etc) and write the count to the matching column.
+ */
+export async function syncInventoryLinenToSheet(params: {
+  spreadsheetId: string;
+  targetSheetName?: string;
+  records: Array<{
+    item_name: string;
+    location: string;
+    count: number;
+  }>;
+}): Promise<SyncResult & { cellsWritten?: number }> {
+  const env = getGoogleEnv();
+  if (!env) {
+    return { success: false, error: 'Google Service Account credentials are not configured.' };
+  }
 
+  const { spreadsheetId, targetSheetName, records } = params;
+
+  try {
+    const auth = getAuthClient(env);
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    // Determine target sheet
+    let sheetName: string;
+    if (targetSheetName) {
+      const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
+      const found = (metaRes.data.sheets ?? []).find((s) => s.properties?.title === targetSheetName);
+      if (!found) {
+        return { success: false, error: `Sheet "${targetSheetName}" not found.` };
+      }
+      sheetName = targetSheetName;
+    } else {
+      const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
+      const found = (metaRes.data.sheets ?? []).find((s) => {
+        const title = (s.properties?.title ?? '').toLowerCase();
+        return title.includes('linen');
+      });
+      sheetName = found?.properties?.title ?? 'Sheet1';
+    }
+    const safeSheetName = /^[\w]+$/.test(sheetName) ? sheetName : `'${sheetName}'`;
+
+    // Read entire sheet (rows 1-220, cols A-FZ to cover all 155 columns)
+    const readRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${safeSheetName}!A1:FZ220`,
+    });
+    const existingValues: (string | null)[][] = readRes.data.values ?? [];
+
+    // Find all "ITEMS" header columns in row 4 (the header row)
+    // Each ITEMS column starts a new block
+    const headerRowIdx = 3; // row 4 (0-indexed)
+    const headerRow = existingValues[headerRowIdx] ?? [];
+    const blocks: { itemsCol: number; locationCols: Map<string, number> }[] = [];
+
+    for (let col = 0; col < headerRow.length; col++) {
+      const cellVal = String(headerRow[col] ?? '').trim().toLowerCase();
+      if (cellVal === 'items') {
+        // Found a block start — scan subsequent columns for locations
+        const locationCols = new Map<string, number>();
+        for (let c = col + 1; c < headerRow.length; c++) {
+          const locVal = String(headerRow[c] ?? '').trim();
+          if (!locVal) continue;
+          if (locVal.toLowerCase() === 'remarks') break; // end of block
+          // Could be room number (e.g. "301") or storage name (e.g. "Linen Room")
+          locationCols.set(locVal, c);
+        }
+        blocks.push({ itemsCol: col, locationCols });
+      }
+    }
+
+    if (blocks.length === 0) {
+      return { success: false, error: 'Could not find any ITEMS header columns in row 4.' };
+    }
+
+    // Build item_name → row_idx map (search column at itemsCol of each block, rows 6+)
+    // We'll do this per block since each block has its own items column
+    const dataUpdates: { range: string; values: (string | number)[][] }[] = [];
+    let cellsWritten = 0;
+
+    records.forEach((rec) => {
+      blocks.forEach((block) => {
+        // Find the row matching this item_name in this block's items column
+        for (let r = 5; r < existingValues.length; r++) {
+          const cellVal = String(existingValues[r]?.[block.itemsCol] ?? '').trim();
+          if (cellVal.toLowerCase() === rec.item_name.toLowerCase()) {
+            // Found the row — now find the column for this location
+            const col = block.locationCols.get(rec.location);
+            if (col !== undefined) {
+              const rowNumber = r + 1; // 1-indexed
+              const colLetter = columnToLetter(col);
+              dataUpdates.push({
+                range: `${safeSheetName}!${colLetter}${rowNumber}`,
+                values: [[String(rec.count)]],
+              });
+              cellsWritten++;
+            }
+            break; // found the item row, stop searching
+          }
+        }
+      });
+    });
+
+    if (dataUpdates.length === 0) {
+      return {
+        success: false,
+        error: 'No matching cells found. Make sure item names and locations in the database match the sheet headers.',
+      };
+    }
+
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        valueInputOption: 'RAW',
+        data: dataUpdates,
+      },
+    });
+
+    return {
+      success: true,
+      newSpreadsheetId: spreadsheetId,
+      newSpreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+      cellsWritten,
+    };
+  } catch (err: any) {
+    console.error('syncInventoryLinenToSheet error:', err);
+    return {
+      success: false,
+      error: err?.message ?? 'Unknown Google API error',
+    };
+  }
+}

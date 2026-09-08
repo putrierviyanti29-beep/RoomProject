@@ -7,6 +7,7 @@ import {
   syncGeneralCleaningToTemplate,
   duplicateTemplateForCurrentMonth,
   syncEquipmentToSheet,
+  syncInventoryLinenToSheet,
 } from '@/lib/google';
 
 // ============================================================================
@@ -75,7 +76,7 @@ export async function POST(req: NextRequest) {
     year?: number;
     mode?: 'duplicate' | 'write'; // default: 'write' (avoids Drive quota issues)
     targetSpreadsheetId?: string; // for 'write' mode — defaults to template ID
-    type?: 'sc' | 'gc' | 'equipment'; // 'sc' = Special Cleaning (default), 'gc' = General Cleaning, 'equipment' = Inventory Equipment
+    type?: 'sc' | 'gc' | 'equipment' | 'linen';
     date?: string; // for 'gc' mode — YYYY-MM-DD, defaults to today
   };
   try {
@@ -288,6 +289,61 @@ export async function POST(req: NextRequest) {
       sheetName: monthlyDup.equipmentSheetName,
       itemsWritten: equipment.length,
       type: 'equipment',
+      mode,
+    });
+  }
+
+  // === INVENTORY LINEN SYNC ===
+  if (type === 'linen') {
+    const { data: linenData, error: linenErr } = await supabase
+      .from('inventory_linen')
+      .select('item_name, location, count')
+      .order('item_name', { ascending: true });
+
+    if (linenErr) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Failed to fetch linen data: ${linenErr.message}`,
+          spreadsheetId: targetSheetId,
+          spreadsheetUrl: targetSheetUrl,
+        },
+        { status: 500 }
+      );
+    }
+
+    const linenRecords = (linenData ?? []) as Array<{
+      item_name: string;
+      location: string;
+      count: number;
+    }>;
+
+    const syncResult = await syncInventoryLinenToSheet({
+      spreadsheetId: targetSheetId,
+      targetSheetName: monthlyDup.linenSheetName,
+      records: linenRecords,
+    });
+
+    if (!syncResult.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: syncResult.error,
+          spreadsheetId: targetSheetId,
+          spreadsheetUrl: targetSheetUrl,
+          warning: 'Spreadsheet accessible but linen data could not be written.',
+        },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      spreadsheetId: targetSheetId,
+      spreadsheetUrl: targetSheetUrl,
+      sheetName: monthlyDup.linenSheetName,
+      cellsWritten: syncResult.cellsWritten ?? 0,
+      type: 'linen',
       mode,
     });
   }
