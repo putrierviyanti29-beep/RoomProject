@@ -25,6 +25,7 @@ export interface Room {
 }
 
 export type CleaningStatus = 'pending' | 'done' | 'issue';
+export type DoneType = 'housekeeping' | 'engineering';
 
 export interface InspectionArea {
   id: string;
@@ -34,19 +35,37 @@ export interface InspectionArea {
   created_at: string;
 }
 
+// General Cleaning — simplified: 1 record per room per day, with done_type
 export interface GeneralCleaning {
   id: string;
   room_id: string;
   status: CleaningStatus;
+  done_type: DoneType | null; // null when status !== 'done'
   completed_by: string | null;
   completed_at: string | null;
   created_at: string;
   date: string;
   notes: string | null;
-  area_id: string | null;
   rooms?: Room | null;
   profiles?: { name: string; email: string } | null;
+}
+
+// Special Cleaning — per room per area per project (replaces 4-area model in GC)
+export interface SpecialCleaning {
+  id: string;
+  project_id: string;
+  room_id: string;
+  area_id: string;
+  status: CleaningStatus;
+  done_type: DoneType | null;
+  completed_by: string | null;
+  completed_at: string | null;
+  notes: string | null;
+  created_at: string;
+  date: string;
+  rooms?: Room | null;
   inspection_areas?: InspectionArea | null;
+  profiles?: { name: string; email: string } | null;
 }
 
 export interface SpecialProject {
