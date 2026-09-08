@@ -857,13 +857,13 @@ export async function syncEquipmentToSheet(params: {
   equipment: Array<{
     no: number;
     item_name: string;
-    previous_balance: number;
-    new_purchase: number;
-    condition_good: number;
-    condition_broken: number;
-    closing_inventory: number;
-    need_to_purchase: number;
-    price_per_unit: number;
+    previous_balance: number | null;
+    new_purchase: number | null;
+    condition_good: number | null;
+    condition_broken: number | null;
+    closing_inventory: number | null;
+    need_to_purchase: number | null;
+    price_per_unit: number | null;
   }>;
   date?: string; // YYYY-MM-DD for the 'Date :' cell
 }): Promise<SyncResult> {
@@ -906,6 +906,7 @@ export async function syncEquipmentToSheet(params: {
     ];
 
     // Write equipment data starting from row 7
+    // Null values are written as empty string (so cell appears empty, not '0')
     equipment.forEach((item, idx) => {
       const row = 7 + idx;
       const totalFormula = `=SUM(I${row}*J${row})`;
@@ -914,13 +915,13 @@ export async function syncEquipmentToSheet(params: {
         values: [[
           item.no,
           item.item_name,
-          item.previous_balance,
-          item.new_purchase,
-          item.condition_good,
-          item.condition_broken,
-          item.closing_inventory,
-          item.need_to_purchase,
-          item.price_per_unit,
+          item.previous_balance === null ? '' : item.previous_balance,
+          item.new_purchase === null ? '' : item.new_purchase,
+          item.condition_good === null ? '' : item.condition_good,
+          item.condition_broken === null ? '' : item.condition_broken,
+          item.closing_inventory === null ? '' : item.closing_inventory,
+          item.need_to_purchase === null ? '' : item.need_to_purchase,
+          item.price_per_unit === null ? '' : item.price_per_unit,
           totalFormula,
         ]],
       });

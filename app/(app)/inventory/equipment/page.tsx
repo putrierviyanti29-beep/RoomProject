@@ -7,11 +7,9 @@ import {
   Plus,
   Trash2,
   RefreshCw,
-  Save,
-  X,
-  Edit3,
   Sheet,
   ExternalLink,
+  Settings,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth-context';
@@ -19,7 +17,6 @@ import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import {
   Table,
   TableBody,
@@ -47,13 +44,32 @@ interface SyncResult {
   error?: string;
 }
 
+type NumericField =
+  | 'previous_balance'
+  | 'new_purchase'
+  | 'condition_good'
+  | 'condition_broken'
+  | 'closing_inventory'
+  | 'need_to_purchase'
+  | 'price_per_unit';
+
+const NUMERIC_FIELDS: { key: NumericField; label: string; width: string }[] = [
+  { key: 'previous_balance', label: 'Prev. Balance', width: 'w-20' },
+  { key: 'new_purchase', label: 'New Purchase', width: 'w-20' },
+  { key: 'condition_good', label: 'Good', width: 'w-16' },
+  { key: 'condition_broken', label: 'Broken', width: 'w-16' },
+  { key: 'closing_inventory', label: 'Closing', width: 'w-20' },
+  { key: 'need_to_purchase', label: 'Need Purchase', width: 'w-20' },
+  { key: 'price_per_unit', label: 'Price/Unit', width: 'w-24' },
+];
+
 export default function InventoryEquipmentPage() {
   const { user, profile } = useAuth();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<InventoryEquipment[]>([]);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editingValues, setEditingValues] = useState<Partial<InventoryEquipment>>({});
+  const [editingCell, setEditingCell] = useState<string | null>(null); // `${id}|${field}`
+  const [editValue, setEditValue] = useState<string>('');
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [newItem, setNewItem] = useState({ no: 0, item_name: '' });
   const [deleteTarget, setDeleteTarget] = useState<InventoryEquipment | null>(null);
@@ -83,57 +99,39 @@ export default function InventoryEquipmentPage() {
     fetchItems();
   }, [fetchItems]);
 
-  function startEdit(item: InventoryEquipment) {
-    setEditingId(item.id);
-    setEditingValues({
-      no: item.no,
-      item_name: item.item_name,
-      previous_balance: item.previous_balance,
-      new_purchase: item.new_purchase,
-      condition_good: item.condition_good,
-      condition_broken: item.condition_broken,
-      closing_inventory: item.closing_inventory,
-      need_to_purchase: item.need_to_purchase,
-      price_per_unit: item.price_per_unit,
-    });
+  function startEditCell(id: string, field: NumericField, currentValue: number | null) {
+    setEditingCell(`${id}|${field}`);
+    setEditValue(currentValue === null ? '' : String(currentValue));
   }
 
-  function cancelEdit() {
-    setEditingId(null);
-    setEditingValues({});
-  }
-
-  async function saveEdit(id: string) {
+  async function saveCell(id: string, field: NumericField) {
     if (!user) return;
+    // Empty string → null (so cell becomes empty, not 0)
+    // Otherwise parse as number
+    const newValue: number | null = editValue.trim() === '' ? null : parseFloat(editValue);
+    if (newValue !== null && isNaN(newValue)) {
+      toast({ title: 'Invalid', description: 'Masukkan angka yang valid.', variant: 'destructive' });
+      return;
+    }
+
     const { error } = await supabase
       .from('inventory_equipment')
-      .update({
-        no: editingValues.no,
-        item_name: editingValues.item_name,
-        previous_balance: editingValues.previous_balance ?? 0,
-        new_purchase: editingValues.new_purchase ?? 0,
-        condition_good: editingValues.condition_good ?? 0,
-        condition_broken: editingValues.condition_broken ?? 0,
-        closing_inventory: editingValues.closing_inventory ?? 0,
-        need_to_purchase: editingValues.need_to_purchase ?? 0,
-        price_per_unit: editingValues.price_per_unit ?? 0,
-      })
+      .update({ [field]: newValue })
       .eq('id', id);
     if (error) {
       toast({ title: 'Gagal simpan', description: error.message, variant: 'destructive' });
-    } else {
-      toast({ title: 'Tersimpan', description: `${editingValues.item_name} updated.` });
-      setEditingId(null);
-      setEditingValues({});
-      fetchItems();
+      return;
     }
+    setEditingCell(null);
+    setEditValue('');
+    fetchItems();
   }
 
   async function handleAdd() {
     if (!newItem.item_name.trim()) return;
-    const nextNo = items.length > 0 ? Math.max(...items.map((i) => i.no)) + 1 : 1;
+    const nextNo = newItem.no || (items.length > 0 ? Math.max(...items.map((i) => i.no)) + 1 : 1);
     const { error } = await supabase.from('inventory_equipment').insert({
-      no: newItem.no || nextNo,
+      no: nextNo,
       item_name: newItem.item_name.trim(),
     });
     if (error) {
@@ -165,7 +163,6 @@ export default function InventoryEquipmentPage() {
     setSyncing(true);
     setLastSync(null);
     try {
-      // Find first special_projects row (just need a projectId for the API)
       const { data: projectData } = await supabase
         .from('special_projects')
         .select('id, project_name, month, year')
@@ -176,7 +173,7 @@ export default function InventoryEquipmentPage() {
       if (!projectData) {
         toast({
           title: 'Tidak ada project',
-          description: 'Buat minimal 1 project di Special Cleaning dulu (dipakai sebagai anchor untuk sync).',
+          description: 'Buat minimal 1 project di Special Cleaning dulu.',
           variant: 'destructive',
         });
         setSyncing(false);
@@ -203,25 +200,31 @@ export default function InventoryEquipmentPage() {
           description: `${data.itemsWritten} items → "${data.sheetName}"`,
         });
       } else {
-        toast({
-          title: 'Sync gagal',
-          description: data.error,
-          variant: 'destructive',
-        });
+        toast({ title: 'Sync gagal', description: data.error, variant: 'destructive' });
       }
     } catch (e: any) {
-      const result: SyncResult = { success: false, error: e.message };
-      setLastSync(result);
+      setLastSync({ success: false, error: e.message });
       toast({ title: 'Sync gagal', description: e.message, variant: 'destructive' });
     }
     setSyncing(false);
   }
 
-  // Summary stats
+  // Helper: format display value (null → '—', number → string)
+  function fmt(val: number | null | undefined): string {
+    if (val === null || val === undefined) return '—';
+    return String(val);
+  }
+
+  function fmtPrice(val: number | null | undefined): string {
+    if (val === null || val === undefined) return '—';
+    return `Rp ${val.toLocaleString('id-ID')}`;
+  }
+
+  // Summary stats (count non-null only)
   const totalItems = items.length;
-  const totalClosing = items.reduce((sum, i) => sum + (i.closing_inventory || 0), 0);
-  const totalNeedPurchase = items.reduce((sum, i) => sum + (i.need_to_purchase || 0), 0);
-  const totalValue = items.reduce((sum, i) => sum + (i.total_price || 0), 0);
+  const totalClosing = items.reduce((sum, i) => sum + (i.closing_inventory ?? 0), 0);
+  const totalNeedPurchase = items.reduce((sum, i) => sum + (i.need_to_purchase ?? 0), 0);
+  const totalValue = items.reduce((sum, i) => sum + (i.total_price ?? 0), 0);
 
   return (
     <div className="space-y-6">
@@ -235,12 +238,7 @@ export default function InventoryEquipmentPage() {
                 <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
                 Refresh
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleSyncToSheet}
-                disabled={syncing}
-              >
+              <Button variant="outline" size="sm" onClick={handleSyncToSheet} disabled={syncing}>
                 <Sheet className={`mr-2 h-4 w-4 ${syncing ? 'animate-pulse' : ''}`} />
                 {syncing ? 'Syncing...' : 'Sync to Sheet'}
               </Button>
@@ -291,9 +289,7 @@ export default function InventoryEquipmentPage() {
       {lastSync && (
         <div
           className={`flex items-start gap-3 rounded-lg border p-4 text-sm ${
-            lastSync.success
-              ? 'border-emerald-200 bg-emerald-50'
-              : 'border-red-200 bg-red-50'
+            lastSync.success ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'
           }`}
         >
           <Sheet className={`h-5 w-5 flex-shrink-0 mt-0.5 ${lastSync.success ? 'text-emerald-600' : 'text-red-600'}`} />
@@ -321,7 +317,7 @@ export default function InventoryEquipmentPage() {
         </div>
       )}
 
-      {/* Equipment table */}
+      {/* Equipment table — inline edit, no action column */}
       <Card className="card-shadow-lg">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -329,23 +325,19 @@ export default function InventoryEquipmentPage() {
               <TableHeader>
                 <TableRow className="bg-muted/50">
                   <TableHead className="w-12">No</TableHead>
-                  <TableHead>Item</TableHead>
-                  <TableHead className="text-right">Prev. Balance</TableHead>
-                  <TableHead className="text-right">New Purchase</TableHead>
-                  <TableHead className="text-right">Good</TableHead>
-                  <TableHead className="text-right">Broken</TableHead>
-                  <TableHead className="text-right">Closing</TableHead>
-                  <TableHead className="text-right">Need Purchase</TableHead>
-                  <TableHead className="text-right">Price/Unit</TableHead>
-                  <TableHead className="text-right">Total Price</TableHead>
-                  {canEdit && <TableHead className="text-right">Actions</TableHead>}
+                  <TableHead className="min-w-[180px]">Item</TableHead>
+                  {NUMERIC_FIELDS.map((f) => (
+                    <TableHead key={f.key} className={`text-right ${f.width}`}>{f.label}</TableHead>
+                  ))}
+                  <TableHead className="text-right w-32 bg-gold/10">Total Price</TableHead>
+                  {canEdit && <TableHead className="w-10"></TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   Array.from({ length: 6 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: canEdit ? 11 : 10 }).map((_, j) => (
+                      {Array.from({ length: NUMERIC_FIELDS.length + 3 }).map((_, j) => (
                         <TableCell key={j}>
                           <div className="h-4 w-16 animate-pulse rounded bg-muted" />
                         </TableCell>
@@ -354,137 +346,75 @@ export default function InventoryEquipmentPage() {
                   ))
                 ) : items.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={canEdit ? 11 : 10} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={NUMERIC_FIELDS.length + 3} className="text-center text-muted-foreground py-8">
                       No items yet. {canEdit && 'Click "Add Item" to create the first one.'}
                     </TableCell>
                   </TableRow>
                 ) : (
-                  items.map((item) => {
-                    const isEditing = editingId === item.id;
-                    if (isEditing) {
-                      return (
-                        <TableRow key={item.id} className="bg-muted/30">
-                          <TableCell>
-                            <Input
-                              type="number"
-                              value={editingValues.no ?? ''}
-                              onChange={(e) => setEditingValues({ ...editingValues, no: parseInt(e.target.value) || 0 })}
-                              className="h-8 w-12"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              value={editingValues.item_name ?? ''}
-                              onChange={(e) => setEditingValues({ ...editingValues, item_name: e.target.value })}
-                              className="h-8"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              value={editingValues.previous_balance ?? 0}
-                              onChange={(e) => setEditingValues({ ...editingValues, previous_balance: parseInt(e.target.value) || 0 })}
-                              className="h-8 w-16 text-right"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              value={editingValues.new_purchase ?? 0}
-                              onChange={(e) => setEditingValues({ ...editingValues, new_purchase: parseInt(e.target.value) || 0 })}
-                              className="h-8 w-16 text-right"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              value={editingValues.condition_good ?? 0}
-                              onChange={(e) => setEditingValues({ ...editingValues, condition_good: parseInt(e.target.value) || 0 })}
-                              className="h-8 w-12 text-right"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              value={editingValues.condition_broken ?? 0}
-                              onChange={(e) => setEditingValues({ ...editingValues, condition_broken: parseInt(e.target.value) || 0 })}
-                              className="h-8 w-12 text-right"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              value={editingValues.closing_inventory ?? 0}
-                              onChange={(e) => setEditingValues({ ...editingValues, closing_inventory: parseInt(e.target.value) || 0 })}
-                              className="h-8 w-16 text-right"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              value={editingValues.need_to_purchase ?? 0}
-                              onChange={(e) => setEditingValues({ ...editingValues, need_to_purchase: parseInt(e.target.value) || 0 })}
-                              className="h-8 w-16 text-right"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              value={editingValues.price_per_unit ?? 0}
-                              onChange={(e) => setEditingValues({ ...editingValues, price_per_unit: parseFloat(e.target.value) || 0 })}
-                              className="h-8 w-20 text-right"
-                            />
-                          </TableCell>
-                          <TableCell className="text-right text-sm text-muted-foreground">
-                            Rp {((editingValues.need_to_purchase ?? 0) * (editingValues.price_per_unit ?? 0)).toLocaleString('id-ID')}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex justify-end gap-1">
-                              <Button size="sm" variant="ghost" onClick={() => saveEdit(item.id)} className="h-7 px-2">
-                                <Save className="h-4 w-4 text-emerald-600" />
-                              </Button>
-                              <Button size="sm" variant="ghost" onClick={cancelEdit} className="h-7 px-2">
-                                <X className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    }
-                    return (
-                      <TableRow key={item.id} className="group">
-                        <TableCell className="text-sm text-muted-foreground">{item.no}</TableCell>
-                        <TableCell className="font-medium">{item.item_name}</TableCell>
-                        <TableCell className="text-right text-sm">{item.previous_balance}</TableCell>
-                        <TableCell className="text-right text-sm">{item.new_purchase}</TableCell>
-                        <TableCell className="text-right text-sm text-emerald-600">{item.condition_good}</TableCell>
-                        <TableCell className="text-right text-sm text-red-600">{item.condition_broken}</TableCell>
-                        <TableCell className="text-right text-sm font-medium">{item.closing_inventory}</TableCell>
-                        <TableCell className="text-right text-sm text-amber-600">{item.need_to_purchase}</TableCell>
-                        <TableCell className="text-right text-sm">Rp {item.price_per_unit.toLocaleString('id-ID')}</TableCell>
-                        <TableCell className="text-right text-sm font-medium">
-                          Rp {item.total_price.toLocaleString('id-ID')}
-                        </TableCell>
-                        {canEdit && (
-                          <TableCell>
-                            <div className="flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                              <Button size="sm" variant="ghost" onClick={() => startEdit(item)} className="h-7 px-2">
-                                <Edit3 className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => setDeleteTarget(item)}
-                                className="h-7 px-2"
+                  items.map((item) => (
+                    <TableRow key={item.id} className="group hover:bg-muted/20">
+                      <TableCell className="text-sm text-muted-foreground">{item.no}</TableCell>
+                      <TableCell className="font-medium">{item.item_name}</TableCell>
+                      {NUMERIC_FIELDS.map((f) => {
+                        const cellKey = `${item.id}|${f.key}`;
+                        const isEditing = editingCell === cellKey;
+                        const value = item[f.key];
+                        return (
+                          <TableCell
+                            key={f.key}
+                            className="text-right text-sm px-1"
+                            onClick={() => canEdit && !isEditing && startEditCell(item.id, f.key, value)}
+                          >
+                            {isEditing ? (
+                              <input
+                                type="number"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onBlur={() => saveCell(item.id, f.key)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') saveCell(item.id, f.key);
+                                  if (e.key === 'Escape') {
+                                    setEditingCell(null);
+                                    setEditValue('');
+                                  }
+                                }}
+                                autoFocus
+                                placeholder="—"
+                                className="h-7 w-full rounded border border-gold bg-background px-1 text-right text-sm focus:outline-none focus:ring-2 focus:ring-gold/40"
+                              />
+                            ) : (
+                              <span
+                                className={`inline-block h-7 w-full rounded px-1 leading-7 ${
+                                  canEdit ? 'cursor-pointer hover:bg-gold/10' : ''
+                                } ${
+                                  value === null || value === undefined
+                                    ? 'text-muted-foreground/40'
+                                    : 'font-medium text-foreground'
+                                }`}
+                                title={canEdit ? 'Click to edit' : ''}
                               >
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
-                            </div>
+                                {fmt(value)}
+                              </span>
+                            )}
                           </TableCell>
-                        )}
-                      </TableRow>
-                    );
-                  })
+                        );
+                      })}
+                      <TableCell className="text-right text-sm font-medium bg-gold/10">
+                        {fmtPrice(item.total_price)}
+                      </TableCell>
+                      {canEdit && (
+                        <TableCell>
+                          <button
+                            onClick={() => setDeleteTarget(item)}
+                            className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))
                 )}
               </TableBody>
             </Table>
@@ -498,13 +428,30 @@ export default function InventoryEquipmentPage() {
         </p>
       )}
 
+      {/* Help card */}
+      <Card className="card-shadow-lg bg-muted/30">
+        <CardContent className="p-4 text-sm text-muted-foreground">
+          <p className="mb-2 flex items-center gap-2 font-medium text-foreground">
+            <Settings className="h-4 w-4" />
+            How to use
+          </p>
+          <ul className="list-inside list-disc space-y-1">
+            <li>Klik cell mana saja untuk edit langsung. Tekan <strong>Enter</strong> untuk simpan, <strong>Esc</strong> untuk batal.</li>
+            <li>Cell kosong (—) artinya belum diisi. <strong>Bukan 0</strong> — biarkan kosong kalau memang tidak ada data.</li>
+            <li><strong>Total Price</strong> otomatis dihitung: Need Purchase × Price/Unit (gold column, read-only).</li>
+            <li>Hover row → icon trash muncul di kanan untuk delete item.</li>
+            <li>Klik <strong>Sync to Sheet</strong> untuk export semua data ke Google Sheets bulan berjalan.</li>
+          </ul>
+        </CardContent>
+      </Card>
+
       {/* Add dialog */}
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add Equipment Item</DialogTitle>
             <DialogDescription>
-              Tambah item equipment baru. Field numerik bisa diisi nanti saat edit.
+              Tambah item equipment baru. Field numerik bisa diisi nanti dengan klik cell.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

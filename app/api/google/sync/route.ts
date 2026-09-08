@@ -253,13 +253,13 @@ export async function POST(req: NextRequest) {
     const equipment = (equipData ?? []) as Array<{
       no: number;
       item_name: string;
-      previous_balance: number;
-      new_purchase: number;
-      condition_good: number;
-      condition_broken: number;
-      closing_inventory: number;
-      need_to_purchase: number;
-      price_per_unit: number;
+      previous_balance: number | null;
+      new_purchase: number | null;
+      condition_good: number | null;
+      condition_broken: number | null;
+      closing_inventory: number | null;
+      need_to_purchase: number | null;
+      price_per_unit: number | null;
     }>;
 
     const syncResult = await syncEquipmentToSheet({

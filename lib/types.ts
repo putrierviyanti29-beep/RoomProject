@@ -105,19 +105,20 @@ export const DEFAULT_INSPECTION_AREAS = [
 
 // ============================================================================
 // Inventory Equipment — matches the "Inventory Equipment TEMPLATE" sheet
+// All numeric columns are nullable (NULL = empty cell, not 0)
 // ============================================================================
 export interface InventoryEquipment {
   id: string;
   no: number;
   item_name: string;
-  previous_balance: number;
-  new_purchase: number;
-  condition_good: number;
-  condition_broken: number;
-  closing_inventory: number;
-  need_to_purchase: number;
-  price_per_unit: number;
-  total_price: number; // computed: need_to_purchase * price_per_unit
+  previous_balance: number | null;
+  new_purchase: number | null;
+  condition_good: number | null;
+  condition_broken: number | null;
+  closing_inventory: number | null;
+  need_to_purchase: number | null;
+  price_per_unit: number | null;
+  total_price: number | null; // computed: need_to_purchase * price_per_unit (NULL if either is NULL)
   created_at: string;
   updated_at: string;
   created_by: string | null;
