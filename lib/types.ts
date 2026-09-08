@@ -35,12 +35,14 @@ export interface InspectionArea {
   created_at: string;
 }
 
-// General Cleaning — simplified: 1 record per room per day, with done_type
+// General Cleaning — simplified: 1 record per room per day
+// done_hk & done_eng are independent booleans (a room can be done by both HK and Eng)
 export interface GeneralCleaning {
   id: string;
   room_id: string;
-  status: CleaningStatus;
-  done_type: DoneType | null; // null when status !== 'done'
+  status: CleaningStatus; // pending | done | issue (done = either HK or Eng true)
+  done_hk: boolean;       // Housekeeping done?
+  done_eng: boolean;      // Engineering done?
   completed_by: string | null;
   completed_at: string | null;
   created_at: string;

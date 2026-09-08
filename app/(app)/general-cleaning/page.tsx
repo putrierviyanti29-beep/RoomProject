@@ -24,7 +24,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
-import type { Room, GeneralCleaning, DoneType } from '@/lib/types';
+import type { Room, GeneralCleaning } from '@/lib/types';
 
 interface RoomWithGC extends Omit<Room, 'room_types'> {
   general_cleaning: GeneralCleaning[];
@@ -63,7 +63,7 @@ export default function GeneralCleaningPage() {
 
     const gcRes = await supabase
       .from('general_cleaning')
-      .select('id, room_id, status, done_type, completed_by, completed_at, date, notes, profiles(name)')
+      .select('id, room_id, status, done_hk, done_eng, completed_by, completed_at, date, notes, profiles(name)')
       .eq('date', selectedDate);
 
     // Surface GC errors with a clear banner so the user knows migration is missing
@@ -140,8 +140,8 @@ https://raw.githubusercontent.com/putrierviyanti29-beep/RoomProject/main/supabas
       }));
   }, [rooms, search]);
 
-  // Mark room as done with specific done_type (housekeeping or engineering)
-  async function markDone(room: RoomWithGC, doneType: DoneType) {
+  // Toggle HK or ENG independently. Both can be true at the same time.
+  async function toggleDone(room: RoomWithGC, type: 'hk' | 'eng') {
     if (!user) {
       toast({ title: 'Not logged in', description: 'Please sign in to update cleaning status.', variant: 'destructive' });
       return;
@@ -153,70 +153,51 @@ https://raw.githubusercontent.com/putrierviyanti29-beep/RoomProject/main/supabas
     const existing = room.general_cleaning[0];
     setUpdating(room.id);
 
+    const columnKey = type === 'hk' ? 'done_hk' : 'done_eng';
+    const label = type === 'hk' ? 'Housekeeping' : 'Engineering';
+
     if (existing) {
-      // If already done with same type → toggle back to pending
-      if (existing.status === 'done' && existing.done_type === doneType) {
-        const { error } = await supabase
-          .from('general_cleaning')
-          .update({
-            status: 'pending',
-            done_type: null,
-            completed_by: null,
-            completed_at: null,
-          })
-          .eq('id', existing.id);
-        if (error) {
-          console.error('GC reset error:', error);
-          const hint = error.message.includes('done_type') || error.message.includes('column')
-            ? 'DB migration mungkin belum di-run. Jalankan file 20260908060000_refactor_cleaning_split.sql di Supabase SQL Editor.'
-            : error.message;
-          toast({ title: 'Gagal update', description: hint, variant: 'destructive' });
-        } else {
-          toast({ title: 'Marked as pending', description: `Room ${room.room_number}` });
-        }
+      // Toggle the boolean
+      const newValue = type === 'hk' ? !existing.done_hk : !existing.done_eng;
+      const otherDone = type === 'hk' ? existing.done_eng : existing.done_hk;
+      const newStatus = newValue || otherDone ? 'done' : 'pending';
+
+      const { error } = await supabase
+        .from('general_cleaning')
+        .update({
+          [columnKey]: newValue,
+          status: newStatus,
+          completed_by: user.id,
+          completed_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id);
+
+      if (error) {
+        console.error('GC toggle error:', error);
+        toast({ title: 'Gagal update', description: error.message, variant: 'destructive' });
       } else {
-        // Switch done_type or change from pending/issue to done
-        const { error } = await supabase
-          .from('general_cleaning')
-          .update({
-            status: 'done',
-            done_type: doneType,
-            completed_by: user.id,
-            completed_at: new Date().toISOString(),
-          })
-          .eq('id', existing.id);
-        if (error) {
-          console.error('GC done error:', error);
-          const hint = error.message.includes('done_type') || error.message.includes('column')
-            ? 'DB migration mungkin belum di-run. Jalankan file 20260908060000_refactor_cleaning_split.sql di Supabase SQL Editor.'
-            : error.message;
-          toast({ title: 'Gagal update', description: hint, variant: 'destructive' });
-        } else {
-          toast({
-            title: `Done by ${doneType === 'housekeeping' ? 'Housekeeping' : 'Engineering'}`,
-            description: `Room ${room.room_number}`,
-          });
-        }
+        toast({
+          title: newValue ? `${label} done` : `${label} cleared`,
+          description: `Room ${room.room_number}`,
+        });
       }
     } else {
       // Insert new record
       const { error } = await supabase.from('general_cleaning').insert({
         room_id: room.id,
         status: 'done',
-        done_type: doneType,
+        done_hk: type === 'hk',
+        done_eng: type === 'eng',
         completed_by: user.id,
         completed_at: new Date().toISOString(),
         date: selectedDate,
       });
       if (error) {
         console.error('GC insert error:', error);
-        const hint = error.message.includes('done_type') || error.message.includes('column')
-          ? 'DB migration mungkin belum di-run. Jalankan file 20260908060000_refactor_cleaning_split.sql di Supabase SQL Editor.'
-          : error.message;
-        toast({ title: 'Gagal insert', description: hint, variant: 'destructive' });
+        toast({ title: 'Gagal insert', description: error.message, variant: 'destructive' });
       } else {
         toast({
-          title: `Done by ${doneType === 'housekeeping' ? 'Housekeeping' : 'Engineering'}`,
+          title: `${label} done`,
           description: `Room ${room.room_number}`,
         });
       }
@@ -225,6 +206,7 @@ https://raw.githubusercontent.com/putrierviyanti29-beep/RoomProject/main/supabas
     fetchData();
   }
 
+  // Clear both HK & ENG → back to pending
   async function clearRoom(room: RoomWithGC) {
     if (!user) {
       toast({ title: 'Not logged in', description: 'Please sign in.', variant: 'destructive' });
@@ -241,7 +223,8 @@ https://raw.githubusercontent.com/putrierviyanti29-beep/RoomProject/main/supabas
       .from('general_cleaning')
       .update({
         status: 'pending',
-        done_type: null,
+        done_hk: false,
+        done_eng: false,
         completed_by: null,
         completed_at: null,
         notes: null,
@@ -249,10 +232,7 @@ https://raw.githubusercontent.com/putrierviyanti29-beep/RoomProject/main/supabas
       .eq('id', existing.id);
     if (error) {
       console.error('GC clear error:', error);
-      const hint = error.message.includes('done_type') || error.message.includes('column')
-        ? 'DB migration mungkin belum di-run.'
-        : error.message;
-      toast({ title: 'Gagal clear', description: hint, variant: 'destructive' });
+      toast({ title: 'Gagal clear', description: error.message, variant: 'destructive' });
     } else {
       toast({ title: 'Cleared', description: `Room ${room.room_number} reset to pending.` });
     }
@@ -260,22 +240,35 @@ https://raw.githubusercontent.com/putrierviyanti29-beep/RoomProject/main/supabas
     fetchData();
   }
 
-  // Summary stats
+  // Summary stats — HK & ENG counted independently (a room done by both counts in both)
   const stats = useMemo(() => {
     const totalRooms = rooms.length;
     let doneHK = 0;
     let doneEng = 0;
+    let doneBoth = 0;
     let issue = 0;
     rooms.forEach((r) => {
       const g = r.general_cleaning[0];
-      if (g?.status === 'done' && g.done_type === 'housekeeping') doneHK++;
-      else if (g?.status === 'done' && g.done_type === 'engineering') doneEng++;
-      else if (g?.status === 'issue') issue++;
+      if (g?.status === 'issue') {
+        issue++;
+        return;
+      }
+      const hk = !!g?.done_hk;
+      const eng = !!g?.done_eng;
+      if (hk && eng) {
+        doneHK++;
+        doneEng++;
+        doneBoth++;
+      } else if (hk) {
+        doneHK++;
+      } else if (eng) {
+        doneEng++;
+      }
     });
-    const done = doneHK + doneEng;
+    const done = doneHK + doneEng - doneBoth; // rooms done by either
     const pending = totalRooms - done - issue;
     const progress = totalRooms > 0 ? Math.round((done / totalRooms) * 100) : 0;
-    return { totalRooms, done, doneHK, doneEng, issue, pending, progress };
+    return { totalRooms, done, doneHK, doneEng, doneBoth, issue, pending, progress };
   }, [rooms]);
 
   function toggleCollapse(key: string) {
@@ -469,17 +462,21 @@ https://raw.githubusercontent.com/putrierviyanti29-beep/RoomProject/main/supabas
                             {floorGroup.rooms.map((room) => {
                               const gc = room.general_cleaning[0];
                               const status = gc?.status;
-                              const isDone = status === 'done';
+                              const hkDone = !!gc?.done_hk;
+                              const engDone = !!gc?.done_eng;
+                              const isDone = hkDone || engDone;
                               const isIssue = status === 'issue';
                               const isUpdating = updating === room.id;
                               return (
                                 <tr
                                   key={room.id}
                                   className={`border-b last:border-0 ${
-                                    isDone
-                                      ? gc?.done_type === 'engineering'
-                                        ? 'bg-blue-50/40'
-                                        : 'bg-emerald-50/40'
+                                    hkDone && engDone
+                                      ? 'bg-purple-50/40'
+                                      : hkDone
+                                      ? 'bg-emerald-50/40'
+                                      : engDone
+                                      ? 'bg-blue-50/40'
                                       : isIssue
                                       ? 'bg-red-50/30'
                                       : ''
@@ -494,33 +491,28 @@ https://raw.githubusercontent.com/putrierviyanti29-beep/RoomProject/main/supabas
                                     </Badge>
                                   </td>
                                   <td className="px-4 py-2">
-                                    {isDone ? (
-                                      <Badge
-                                        className={
-                                          gc?.done_type === 'engineering'
-                                            ? 'bg-blue-100 text-blue-700 hover:bg-blue-100'
-                                            : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100'
-                                        }
-                                      >
-                                        {gc?.done_type === 'engineering' ? (
-                                          <>
-                                            <Wrench className="mr-1 h-3 w-3" /> Eng
-                                          </>
-                                        ) : (
-                                          <>
-                                            <Brush className="mr-1 h-3 w-3" /> HK
-                                          </>
-                                        )}
-                                      </Badge>
-                                    ) : isIssue ? (
-                                      <Badge className="bg-red-100 text-red-700 hover:bg-red-100">
-                                        <AlertTriangle className="mr-1 h-3 w-3" /> Issue
-                                      </Badge>
-                                    ) : (
-                                      <Badge variant="outline">
-                                        <Clock className="mr-1 h-3 w-3" /> Pending
-                                      </Badge>
-                                    )}
+                                    <div className="flex gap-1">
+                                      {hkDone && (
+                                        <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                                          <Brush className="mr-1 h-3 w-3" /> HK
+                                        </Badge>
+                                      )}
+                                      {engDone && (
+                                        <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">
+                                          <Wrench className="mr-1 h-3 w-3" /> Eng
+                                        </Badge>
+                                      )}
+                                      {isIssue && (
+                                        <Badge className="bg-red-100 text-red-700 hover:bg-red-100">
+                                          <AlertTriangle className="mr-1 h-3 w-3" /> Issue
+                                        </Badge>
+                                      )}
+                                      {!isDone && !isIssue && (
+                                        <Badge variant="outline">
+                                          <Clock className="mr-1 h-3 w-3" /> Pending
+                                        </Badge>
+                                      )}
+                                    </div>
                                   </td>
                                   <td className="px-4 py-2 text-muted-foreground">
                                     {gc?.profiles?.name ?? '—'}
@@ -539,13 +531,13 @@ https://raw.githubusercontent.com/putrierviyanti29-beep/RoomProject/main/supabas
                                         size="sm"
                                         variant="outline"
                                         disabled={!canToggle || isUpdating}
-                                        onClick={() => markDone(room, 'housekeeping')}
+                                        onClick={() => toggleDone(room, 'hk')}
                                         className={`h-7 px-2 text-xs ${
-                                          isDone && gc?.done_type === 'housekeeping'
+                                          hkDone
                                             ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
                                             : ''
                                         }`}
-                                        title="Mark as Done by Housekeeping"
+                                        title="Toggle Housekeeping done"
                                       >
                                         <Brush className="mr-1 h-3 w-3" /> HK
                                       </Button>
@@ -553,13 +545,13 @@ https://raw.githubusercontent.com/putrierviyanti29-beep/RoomProject/main/supabas
                                         size="sm"
                                         variant="outline"
                                         disabled={!canToggle || isUpdating}
-                                        onClick={() => markDone(room, 'engineering')}
+                                        onClick={() => toggleDone(room, 'eng')}
                                         className={`h-7 px-2 text-xs ${
-                                          isDone && gc?.done_type === 'engineering'
+                                          engDone
                                             ? 'border-blue-500 bg-blue-50 text-blue-700'
                                             : ''
                                         }`}
-                                        title="Mark as Done by Engineering"
+                                        title="Toggle Engineering done"
                                       >
                                         <Wrench className="mr-1 h-3 w-3" /> Eng
                                       </Button>
@@ -570,7 +562,7 @@ https://raw.githubusercontent.com/putrierviyanti29-beep/RoomProject/main/supabas
                                           disabled={!canToggle || isUpdating}
                                           onClick={() => clearRoom(room)}
                                           className="h-7 px-2 text-xs text-muted-foreground"
-                                          title="Reset to pending"
+                                          title="Reset both HK & ENG to pending"
                                         >
                                           Clear
                                         </Button>
