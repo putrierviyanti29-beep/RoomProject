@@ -63,7 +63,7 @@ export default function GeneralCleaningPage() {
 
     const gcRes = await supabase
       .from('general_cleaning')
-      .select('id, room_id, status, done_type, completed_by, completed_at, date, notes, profiles(name, email)')
+      .select('id, room_id, status, done_type, completed_by, completed_at, date, notes, profiles(name)')
       .eq('date', selectedDate);
 
     // Surface GC errors with a clear banner so the user knows migration is missing

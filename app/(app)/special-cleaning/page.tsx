@@ -91,7 +91,7 @@ export default function SpecialCleaningPage() {
     setChecklistLoading(true);
     const { data } = await supabase
       .from('special_checklists')
-      .select('id, project_id, item_name, status, completed_by, completed_at, created_at, profiles(name, email)')
+      .select('id, project_id, item_name, status, completed_by, completed_at, created_at, profiles(name)')
       .eq('project_id', selectedProject.id)
       .order('created_at', { ascending: true });
     setChecklists((data ?? []) as unknown as SpecialChecklist[]);

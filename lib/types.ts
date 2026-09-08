@@ -47,7 +47,7 @@ export interface GeneralCleaning {
   date: string;
   notes: string | null;
   rooms?: Room | null;
-  profiles?: { name: string; email: string } | null;
+  profiles?: { name: string; email?: string } | null;
 }
 
 // Special Cleaning — per room per area per project (replaces 4-area model in GC)
@@ -65,7 +65,7 @@ export interface SpecialCleaning {
   date: string;
   rooms?: Room | null;
   inspection_areas?: InspectionArea | null;
-  profiles?: { name: string; email: string } | null;
+  profiles?: { name: string; email?: string } | null;
 }
 
 export interface SpecialProject {
@@ -84,7 +84,7 @@ export interface SpecialChecklist {
   completed_by: string | null;
   completed_at: string | null;
   created_at: string;
-  profiles?: { name: string; email: string } | null;
+  profiles?: { name: string; email?: string } | null;
 }
 
 export const MONTH_NAMES = [
