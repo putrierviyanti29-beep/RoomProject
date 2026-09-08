@@ -7,7 +7,9 @@ import {
   syncGeneralCleaningToTemplate,
   duplicateTemplateForCurrentMonth,
   syncEquipmentToSheet,
-  syncInventoryLinenToSheet,
+  syncInventoryMatrixToSheet,
+  syncInventoryAsetRoomToSheet,
+  syncInventoryAsetAreaToSheet,
 } from '@/lib/google';
 
 // ============================================================================
@@ -76,7 +78,7 @@ export async function POST(req: NextRequest) {
     year?: number;
     mode?: 'duplicate' | 'write'; // default: 'write' (avoids Drive quota issues)
     targetSpreadsheetId?: string; // for 'write' mode — defaults to template ID
-    type?: 'sc' | 'gc' | 'equipment' | 'linen';
+    type?: 'sc' | 'gc' | 'equipment' | 'linen' | 'aset-room' | 'aset-area';
     date?: string; // for 'gc' mode — YYYY-MM-DD, defaults to today
   };
   try {
@@ -315,13 +317,14 @@ export async function POST(req: NextRequest) {
     const linenRecords = (linenData ?? []) as Array<{
       item_name: string;
       location: string;
-      count: number;
+      count: number | null;
     }>;
 
-    const syncResult = await syncInventoryLinenToSheet({
+    const syncResult = await syncInventoryMatrixToSheet({
       spreadsheetId: targetSheetId,
       targetSheetName: monthlyDup.linenSheetName,
       records: linenRecords,
+      sheetNameKeyword: 'linen',
     });
 
     if (!syncResult.success) {
@@ -344,6 +347,88 @@ export async function POST(req: NextRequest) {
       sheetName: monthlyDup.linenSheetName,
       cellsWritten: syncResult.cellsWritten ?? 0,
       type: 'linen',
+      mode,
+    });
+  }
+
+  // === INVENTORY ASET ROOM SYNC ===
+  if (type === 'aset-room') {
+    const { data: asetRoomData, error: asetRoomErr } = await supabase
+      .from('inventory_aset_room')
+      .select('item_name, location, count')
+      .order('item_name', { ascending: true });
+
+    if (asetRoomErr) {
+      return NextResponse.json(
+        { success: false, error: `Failed to fetch aset room data: ${asetRoomErr.message}`, spreadsheetId: targetSheetId, spreadsheetUrl: targetSheetUrl },
+        { status: 500 }
+      );
+    }
+
+    const asetRoomRecords = (asetRoomData ?? []) as Array<{ item_name: string; location: string; count: number | null }>;
+
+    const syncResult = await syncInventoryAsetRoomToSheet({
+      spreadsheetId: targetSheetId,
+      targetSheetName: monthlyDup.asetRoomSheetName,
+      records: asetRoomRecords,
+    });
+
+    if (!syncResult.success) {
+      return NextResponse.json(
+        { success: false, error: syncResult.error, spreadsheetId: targetSheetId, spreadsheetUrl: targetSheetUrl, warning: 'Spreadsheet accessible but aset room data could not be written.' },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      spreadsheetId: targetSheetId,
+      spreadsheetUrl: targetSheetUrl,
+      sheetName: monthlyDup.asetRoomSheetName,
+      cellsWritten: syncResult.cellsWritten ?? 0,
+      type: 'aset-room',
+      mode,
+    });
+  }
+
+  // === INVENTORY ASET AREA SYNC ===
+  if (type === 'aset-area') {
+    const { data: asetAreaData, error: asetAreaErr } = await supabase
+      .from('inventory_aset_area')
+      .select('item_name, location, count')
+      .order('item_name', { ascending: true });
+
+    if (asetAreaErr) {
+      return NextResponse.json(
+        { success: false, error: `Failed to fetch aset area data: ${asetAreaErr.message}`, spreadsheetId: targetSheetId, spreadsheetUrl: targetSheetUrl },
+        { status: 500 }
+      );
+    }
+
+    const asetAreaRecords = (asetAreaData ?? []) as Array<{ item_name: string; location: string; count: number | null }>;
+
+    // Aset Area writes to the same Aset Room sheet (Block 6 of Aset Room template)
+    // because there's no separate Aset Area template sheet
+    const syncResult = await syncInventoryAsetAreaToSheet({
+      spreadsheetId: targetSheetId,
+      targetSheetName: monthlyDup.asetRoomSheetName ?? monthlyDup.asetAreaSheetName,
+      records: asetAreaRecords,
+    });
+
+    if (!syncResult.success) {
+      return NextResponse.json(
+        { success: false, error: syncResult.error, spreadsheetId: targetSheetId, spreadsheetUrl: targetSheetUrl, warning: 'Spreadsheet accessible but aset area data could not be written.' },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      spreadsheetId: targetSheetId,
+      spreadsheetUrl: targetSheetUrl,
+      sheetName: monthlyDup.asetRoomSheetName ?? monthlyDup.asetAreaSheetName,
+      cellsWritten: syncResult.cellsWritten ?? 0,
+      type: 'aset-area',
       mode,
     });
   }

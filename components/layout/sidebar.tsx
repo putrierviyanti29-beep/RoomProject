@@ -17,6 +17,7 @@ import {
   BedDouble,
   Armchair,
   Wrench,
+  Building2,
 } from 'lucide-react';
 import type { UserRole } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -47,6 +48,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: 'Inventory Linen', href: '/inventory/linen', icon: BedDouble, roles: ['admin', 'manager', 'supervisor'] },
       { label: 'Inventory Aset Room', href: '/inventory/aset-room', icon: Armchair, roles: ['admin', 'manager', 'supervisor'] },
+      { label: 'Inventory Aset Area', href: '/inventory/aset-area', icon: Building2, roles: ['admin', 'manager', 'supervisor'] },
       { label: 'Inventory Equipment Room & Area', href: '/inventory/equipment', icon: Wrench, roles: ['admin', 'manager', 'supervisor'] },
     ],
   },

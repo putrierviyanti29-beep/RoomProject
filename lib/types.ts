@@ -186,3 +186,104 @@ export const LINEN_ROOM_GROUPS: { label: string; rooms: string[] }[] = [
   { label: 'Section A Floor 4', rooms: ['401', '402', '403', '404', '405', '406', '407', '408', '409', '410', '411'] },
   { label: 'Section A Floor 5', rooms: ['501', '502', '503', '504', '505', '506', '507'] },
 ];
+
+// ============================================================================
+// Inventory Aset Room — matrix per item × room/storage (similar to Linen)
+// ============================================================================
+export interface InventoryAsetRoom {
+  id: string;
+  item_name: string;
+  location: string; // room number (e.g. '301') or storage name (e.g. 'ROOM', 'Gudang 3C')
+  count: number | null;
+  period_month: number;
+  period_year: number;
+  remarks: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  profiles?: { name: string } | null;
+}
+
+// Default Aset Room items (21 items matching template rows 6-26)
+export const DEFAULT_ASET_ROOM_ITEMS = [
+  'Television',
+  'Air conditioner',
+  'Remote TV & AC',
+  'Telephone',
+  'Standing lamp',
+  'Bed Side Lamp',
+  'Hanger',
+  'Box Tissue',
+  'Dust Bin',
+  'Kettle jug',
+  'Cofee tray',
+  'Coffe Set Holder',
+  'MUG',
+  'Sofa',
+  'Dressing chair',
+  'AKRILIC TV',
+  'Amenities Tray',
+  'Tumbler glass',
+  'Soap dispenser',
+  'Tissue Holder',
+] as const;
+
+// Default Aset Room storage locations (Block 1 of Aset Room template)
+export const DEFAULT_ASET_STORAGES = [
+  'ROOM',
+  'Gudang 3C',
+  'Gudang 5C',
+  'Gudang 4A',
+  'Office',
+  'OOO',
+] as const;
+
+// Reuse LINEN_ROOM_GROUPS for Aset Room (same room structure)
+
+// ============================================================================
+// Inventory Aset Area — area items × area locations (separate module)
+// ============================================================================
+export interface InventoryAsetArea {
+  id: string;
+  item_name: string;
+  location: string; // area name (e.g. 'Floor 4', 'Lobby area', 'Restaurant')
+  count: number | null;
+  period_month: number;
+  period_year: number;
+  remarks: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  profiles?: { name: string } | null;
+}
+
+// Default Aset Area items (11 items matching template Block 6)
+export const DEFAULT_ASET_AREA_ITEMS = [
+  'Stella matic',
+  'Standing astray',
+  'box tissue wall',
+  'Box tissue',
+  'Soap dispenser',
+  'Dustbin',
+  'Sofa small',
+  'Sofa big',
+  'Sofa table',
+  'Cushion',
+  'Standing AC',
+] as const;
+
+// Default Aset Area locations (Block 6 columns, excluding 'Total')
+export const DEFAULT_ASET_AREA_LOCATIONS = [
+  'Floor 4',
+  'Floor 3',
+  'Lobby area',
+  'Restaurant',
+  'Altama 1',
+  'Altama 2',
+  'Gunung karang',
+  'Lobby ballroom',
+  'Ball room',
+  'Toilet A1',
+  'Toilet A2',
+  'Toilet ball room',
+] as const;

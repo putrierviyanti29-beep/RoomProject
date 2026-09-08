@@ -971,21 +971,24 @@ export async function syncEquipmentToSheet(params: {
  * then for each (item, location) pair in DB, find the matching row (by item_name
  * in column B/L/AD/etc) and write the count to the matching column.
  */
-export async function syncInventoryLinenToSheet(params: {
+// Generic matrix sync function (used by Linen, Aset Room, Aset Area)
+// All three modules have the same structure: items × locations matrix
+export async function syncInventoryMatrixToSheet(params: {
   spreadsheetId: string;
   targetSheetName?: string;
   records: Array<{
     item_name: string;
     location: string;
-    count: number;
+    count: number | null;
   }>;
+  sheetNameKeyword?: string; // keyword to find sheet if targetSheetName not provided (e.g. 'linen', 'aset')
 }): Promise<SyncResult & { cellsWritten?: number }> {
   const env = getGoogleEnv();
   if (!env) {
     return { success: false, error: 'Google Service Account credentials are not configured.' };
   }
 
-  const { spreadsheetId, targetSheetName, records } = params;
+  const { spreadsheetId, targetSheetName, records, sheetNameKeyword } = params;
 
   try {
     const auth = getAuthClient(env);
@@ -1002,9 +1005,10 @@ export async function syncInventoryLinenToSheet(params: {
       sheetName = targetSheetName;
     } else {
       const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
+      const keyword = sheetNameKeyword ?? 'linen';
       const found = (metaRes.data.sheets ?? []).find((s) => {
         const title = (s.properties?.title ?? '').toLowerCase();
-        return title.includes('linen');
+        return title.includes(keyword);
       });
       sheetName = found?.properties?.title ?? 'Sheet1';
     }
@@ -1077,7 +1081,7 @@ export async function syncInventoryLinenToSheet(params: {
               const colLetter = columnToLetter(col);
               dataUpdates.push({
                 range: `${safeSheetName}!${colLetter}${rowNumber}`,
-                values: [[String(rec.count)]],
+                values: [[rec.count === null || rec.count === undefined ? '' : String(rec.count)]],
               });
               cellsWritten++;
             }
@@ -1131,10 +1135,34 @@ the item_name values in your database.`,
       cellsWritten,
     };
   } catch (err: any) {
-    console.error('syncInventoryLinenToSheet error:', err);
+    console.error('syncInventoryMatrixToSheet error:', err);
     return {
       success: false,
       error: err?.message ?? 'Unknown Google API error',
     };
   }
+}
+
+// Wrapper for Aset Room sync (same logic as Linen matrix, different sheet keyword)
+export async function syncInventoryAsetRoomToSheet(params: {
+  spreadsheetId: string;
+  targetSheetName?: string;
+  records: Array<{ item_name: string; location: string; count: number | null }>;
+}): Promise<SyncResult & { cellsWritten?: number }> {
+  return syncInventoryMatrixToSheet({
+    ...params,
+    sheetNameKeyword: 'aset',
+  });
+}
+
+// Wrapper for Aset Area sync (same logic, different sheet)
+export async function syncInventoryAsetAreaToSheet(params: {
+  spreadsheetId: string;
+  targetSheetName?: string;
+  records: Array<{ item_name: string; location: string; count: number | null }>;
+}): Promise<SyncResult & { cellsWritten?: number }> {
+  return syncInventoryMatrixToSheet({
+    ...params,
+    sheetNameKeyword: 'aset',
+  });
 }

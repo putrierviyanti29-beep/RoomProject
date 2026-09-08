@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import {
-  Armchair,
+  Building2,
   RefreshCw,
   Plus,
   Sheet,
@@ -26,11 +26,10 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import {
-  DEFAULT_ASET_ROOM_ITEMS,
-  DEFAULT_ASET_STORAGES,
-  LINEN_ROOM_GROUPS,
+  DEFAULT_ASET_AREA_ITEMS,
+  DEFAULT_ASET_AREA_LOCATIONS,
 } from '@/lib/types';
-import type { InventoryAsetRoom } from '@/lib/types';
+import type { InventoryAsetArea } from '@/lib/types';
 
 interface SyncResult {
   success: boolean;
@@ -45,22 +44,21 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-export default function InventoryAsetRoomPage() {
+export default function InventoryAsetAreaPage() {
   const { user, profile } = useAuth();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
-  const [records, setRecords] = useState<InventoryAsetRoom[]>([]);
-  const [items, setItems] = useState<string[]>([...DEFAULT_ASET_ROOM_ITEMS]);
-  const [storages, setStorages] = useState<string[]>([...DEFAULT_ASET_STORAGES]);
+  const [records, setRecords] = useState<InventoryAsetArea[]>([]);
+  const [items, setItems] = useState<string[]>([...DEFAULT_ASET_AREA_ITEMS]);
+  const [locations, setLocations] = useState<string[]>([...DEFAULT_ASET_AREA_LOCATIONS]);
   const [periodMonth, setPeriodMonth] = useState(new Date().getMonth() + 1);
   const [periodYear, setPeriodYear] = useState(new Date().getFullYear());
-  const [activeGroup, setActiveGroup] = useState<string>('storages');
   const [editingCell, setEditingCell] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>('');
   const [addItemOpen, setAddItemOpen] = useState(false);
-  const [addStorageOpen, setAddStorageOpen] = useState(false);
+  const [addLocationOpen, setAddLocationOpen] = useState(false);
   const [newItemName, setNewItemName] = useState('');
-  const [newStorageName, setNewStorageName] = useState('');
+  const [newLocationName, setNewLocationName] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<SyncResult | null>(null);
 
@@ -71,23 +69,23 @@ export default function InventoryAsetRoomPage() {
   const fetchRecords = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
-      .from('inventory_aset_room')
+      .from('inventory_aset_area')
       .select('id, item_name, location, count, period_month, period_year, remarks, created_at, updated_at, created_by, profiles(name)')
       .eq('period_month', periodMonth)
       .eq('period_year', periodYear);
     if (error) {
-      console.error('Fetch aset room error:', error);
+      console.error('Fetch aset area error:', error);
       toast({ title: 'Gagal memuat data', description: error.message, variant: 'destructive' });
     } else {
-      setRecords((data ?? []) as unknown as InventoryAsetRoom[]);
-      const itemSet = new Set<string>(DEFAULT_ASET_ROOM_ITEMS);
-      const storageSet = new Set<string>(DEFAULT_ASET_STORAGES);
+      setRecords((data ?? []) as unknown as InventoryAsetArea[]);
+      const itemSet = new Set<string>(DEFAULT_ASET_AREA_ITEMS);
+      const locSet = new Set<string>(DEFAULT_ASET_AREA_LOCATIONS);
       (data ?? []).forEach((r: any) => {
         if (r.item_name) itemSet.add(r.item_name);
-        if (r.location && !/^\d+$/.test(r.location)) storageSet.add(r.location);
+        if (r.location) locSet.add(r.location);
       });
       setItems(Array.from(itemSet));
-      setStorages(Array.from(storageSet));
+      setLocations(Array.from(locSet));
     }
     setLoading(false);
   }, [periodMonth, periodYear, toast]);
@@ -124,7 +122,7 @@ export default function InventoryAsetRoomPage() {
     const existing = records.find((r) => r.item_name === item && r.location === location);
     if (existing) {
       const { error } = await supabase
-        .from('inventory_aset_room')
+        .from('inventory_aset_area')
         .update({ count: newCount })
         .eq('id', existing.id);
       if (error) {
@@ -132,7 +130,7 @@ export default function InventoryAsetRoomPage() {
         return;
       }
     } else {
-      const { error } = await supabase.from('inventory_aset_room').insert({
+      const { error } = await supabase.from('inventory_aset_area').insert({
         item_name: item,
         location,
         count: newCount,
@@ -163,16 +161,16 @@ export default function InventoryAsetRoomPage() {
     setAddItemOpen(false);
   }
 
-  function handleAddStorage() {
-    if (!newStorageName.trim()) return;
-    if (storages.includes(newStorageName.trim())) {
-      toast({ title: 'Sudah ada', description: 'Storage sudah ada di list.', variant: 'destructive' });
+  function handleAddLocation() {
+    if (!newLocationName.trim()) return;
+    if (locations.includes(newLocationName.trim())) {
+      toast({ title: 'Sudah ada', description: 'Location sudah ada di list.', variant: 'destructive' });
       return;
     }
-    setStorages([...storages, newStorageName.trim()]);
-    toast({ title: 'Storage ditambah', description: newStorageName });
-    setNewStorageName('');
-    setAddStorageOpen(false);
+    setLocations([...locations, newLocationName.trim()]);
+    toast({ title: 'Location ditambah', description: newLocationName });
+    setNewLocationName('');
+    setAddLocationOpen(false);
   }
 
   async function handleSyncToSheet() {
@@ -201,7 +199,7 @@ export default function InventoryAsetRoomPage() {
           month: projectData.month,
           year: projectData.year,
           mode: 'write',
-          type: 'aset-room',
+          type: 'aset-area',
         }),
       });
       const data: SyncResult = await res.json();
@@ -218,26 +216,16 @@ export default function InventoryAsetRoomPage() {
     setSyncing(false);
   }
 
-  const activeLocations: string[] =
-    activeGroup === 'storages'
-      ? storages
-      : LINEN_ROOM_GROUPS.find((g) => g.label === activeGroup)?.rooms ?? [];
-
   const totalRecords = records.length;
   const totalItems = items.length;
-  const totalLocations = storages.length + LINEN_ROOM_GROUPS.reduce((sum, g) => sum + g.rooms.length, 0);
+  const totalLocations = locations.length;
   const totalStock = records.reduce((sum, r) => sum + (r.count ?? 0), 0);
-
-  const groupTabs = [
-    { key: 'storages', label: `Storages (${storages.length})` },
-    ...LINEN_ROOM_GROUPS.map((g) => ({ key: g.label, label: `${g.label} (${g.rooms.length})` })),
-  ];
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Inventory Aset Room"
-        description="Track aset tetap per kamar: Television, AC, Telephone, Sofa, dll. Matrix grid dengan inline edit."
+        title="Inventory Aset Area"
+        description="Track aset area umum: Stella matic, Sofa, Cushion, dll untuk lobby, restaurant, toilet, ballroom."
         action={
           canEdit && (
             <div className="flex flex-wrap gap-2">
@@ -249,9 +237,9 @@ export default function InventoryAsetRoomPage() {
                 <Sheet className={`mr-2 h-4 w-4 ${syncing ? 'animate-pulse' : ''}`} />
                 {syncing ? 'Syncing...' : 'Sync to Sheet'}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => setAddStorageOpen(true)}>
+              <Button variant="outline" size="sm" onClick={() => setAddLocationOpen(true)}>
                 <Plus className="mr-2 h-4 w-4" />
-                Storage
+                Location
               </Button>
               <Button size="sm" onClick={() => setAddItemOpen(true)} className="gold-gradient text-navy hover:opacity-90">
                 <Plus className="mr-2 h-4 w-4" />
@@ -274,7 +262,7 @@ export default function InventoryAsetRoomPage() {
             <Card className="card-shadow-lg">
               <CardContent className="flex items-center gap-3 p-4">
                 <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${stat.bg}`}>
-                  <Armchair className={`h-5 w-5 ${stat.color}`} />
+                  <Building2 className={`h-5 w-5 ${stat.color}`} />
                 </div>
                 <div>
                   <p className="font-display text-2xl font-bold">{stat.value}</p>
@@ -319,15 +307,6 @@ export default function InventoryAsetRoomPage() {
         </CardContent>
       </Card>
 
-      {/* Group tabs */}
-      <div className="flex flex-wrap gap-2">
-        {groupTabs.map((tab) => (
-          <button key={tab.key} onClick={() => setActiveGroup(tab.key)} className={`rounded-full px-3 py-1.5 text-xs font-medium transition-all ${activeGroup === tab.key ? 'gold-gradient text-navy' : 'border border-border bg-card text-muted-foreground hover:border-gold/50 hover:text-foreground'}`}>
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
       {/* Matrix table */}
       <Card className="card-shadow-lg">
         <CardContent className="p-0">
@@ -337,8 +316,8 @@ export default function InventoryAsetRoomPage() {
                 <tr>
                   <th className="min-w-[40px] border-r px-3 py-2 text-left font-medium">No</th>
                   <th className="min-w-[180px] border-r px-3 py-2 text-left font-medium">Item</th>
-                  {activeLocations.map((loc) => (
-                    <th key={loc} className="min-w-[70px] border-r px-2 py-2 text-center font-medium" title={loc}>{loc}</th>
+                  {locations.map((loc) => (
+                    <th key={loc} className="min-w-[90px] border-r px-2 py-2 text-center font-medium" title={loc}>{loc}</th>
                   ))}
                   <th className="min-w-[70px] px-2 py-2 text-center font-medium bg-gold/10">Total</th>
                 </tr>
@@ -346,27 +325,27 @@ export default function InventoryAsetRoomPage() {
               <tbody>
                 {loading ? (
                   Array.from({ length: 7 }).map((_, i) => (
-                    <tr key={i} className="border-b"><td colSpan={activeLocations.length + 3} className="px-3 py-2"><div className="h-6 animate-pulse rounded bg-muted/50" /></td></tr>
+                    <tr key={i} className="border-b"><td colSpan={locations.length + 3} className="px-3 py-2"><div className="h-6 animate-pulse rounded bg-muted/50" /></td></tr>
                   ))
                 ) : items.length === 0 ? (
-                  <tr><td colSpan={activeLocations.length + 3} className="px-3 py-8 text-center text-muted-foreground">No items yet. Click &quot;Item&quot; to add aset items.</td></tr>
+                  <tr><td colSpan={locations.length + 3} className="px-3 py-8 text-center text-muted-foreground">No items yet. Click &quot;Item&quot; to add aset area items.</td></tr>
                 ) : (
                   items.map((item, itemIdx) => {
-                    const rowTotal = activeLocations.reduce((sum, loc) => sum + (getCount(item, loc) ?? 0), 0);
+                    const rowTotal = locations.reduce((sum, loc) => sum + (getCount(item, loc) ?? 0), 0);
                     return (
                       <tr key={item} className="border-b last:border-0 hover:bg-muted/20">
                         <td className="border-r px-3 py-1.5 text-xs text-muted-foreground">{itemIdx + 1}</td>
                         <td className="border-r px-3 py-1.5 font-medium">{item}</td>
-                        {activeLocations.map((loc) => {
+                        {locations.map((loc) => {
                           const cellKey = `${item}|${loc}`;
                           const isEditing = editingCell === cellKey;
                           const count = getCount(item, loc);
                           return (
                             <td key={loc} className="border-r px-1 py-1 text-center" onClick={() => canEdit && !isEditing && startEditCell(item, loc)}>
                               {isEditing ? (
-                                <input type="number" value={editValue} onChange={(e) => setEditValue(e.target.value)} onBlur={() => saveCell(item, loc)} onKeyDown={(e) => { if (e.key === 'Enter') saveCell(item, loc); if (e.key === 'Escape') { setEditingCell(null); setEditValue(''); } }} autoFocus placeholder="—" className="h-7 w-14 rounded border border-gold bg-background px-1 text-center text-sm focus:outline-none focus:ring-2 focus:ring-gold/40" />
+                                <input type="number" value={editValue} onChange={(e) => setEditValue(e.target.value)} onBlur={() => saveCell(item, loc)} onKeyDown={(e) => { if (e.key === 'Enter') saveCell(item, loc); if (e.key === 'Escape') { setEditingCell(null); setEditValue(''); } }} autoFocus placeholder="—" className="h-7 w-16 rounded border border-gold bg-background px-1 text-center text-sm focus:outline-none focus:ring-2 focus:ring-gold/40" />
                               ) : (
-                                <span className={`inline-block h-7 w-14 rounded ${canEdit ? 'cursor-pointer hover:bg-gold/10' : ''} ${count === null || count === undefined ? 'text-muted-foreground/40' : 'font-medium text-foreground'}`} title={canEdit ? 'Click to edit' : ''}>
+                                <span className={`inline-block h-7 w-16 rounded ${canEdit ? 'cursor-pointer hover:bg-gold/10' : ''} ${count === null || count === undefined ? 'text-muted-foreground/40' : 'font-medium text-foreground'}`} title={canEdit ? 'Click to edit' : ''}>
                                   {count === null || count === undefined ? '—' : count}
                                 </span>
                               )}
@@ -393,12 +372,11 @@ export default function InventoryAsetRoomPage() {
         <CardContent className="p-4 text-sm text-muted-foreground">
           <p className="mb-2 flex items-center gap-2 font-medium text-foreground"><Settings className="h-4 w-4" />How to use</p>
           <ul className="list-inside list-disc space-y-1">
-            <li>Pilih tab <strong>Storages</strong> untuk input aset di gudang (ROOM, Gudang 3C, dll).</li>
-            <li>Pilih tab <strong>Section X Floor Y</strong> untuk input aset per kamar di floor tersebut.</li>
+            <li>Matrix ini track aset untuk <strong>area umum</strong> (lobby, restaurant, toilet, ballroom, dll).</li>
             <li>Klik cell untuk edit count. Tekan <strong>Enter</strong> untuk simpan, <strong>Esc</strong> untuk batal.</li>
             <li>Cell kosong (—) artinya belum diisi. <strong>Bukan 0</strong> — biarkan kosong kalau memang tidak ada data.</li>
             <li>Row &quot;Total&quot; di kanan otomatis sum semua location di row itu.</li>
-            <li>Untuk aset area umum (lobby, restaurant, toilet), buka menu <strong>Inventory Aset Area</strong>.</li>
+            <li>Untuk aset kamar (TV, AC, dll), buka menu <strong>Inventory Aset Room</strong>.</li>
           </ul>
         </CardContent>
       </Card>
@@ -406,18 +384,18 @@ export default function InventoryAsetRoomPage() {
       {/* Add Item dialog */}
       <Dialog open={addItemOpen} onOpenChange={setAddItemOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Add Aset Item</DialogTitle><DialogDescription>Tambah jenis aset room baru (e.g. Hair Dryer, Mini Bar, Safe Box).</DialogDescription></DialogHeader>
-          <Input placeholder="e.g. Hair Dryer" value={newItemName} onChange={(e) => setNewItemName(e.target.value)} autoFocus onKeyDown={(e) => { if (e.key === 'Enter') handleAddItem(); }} />
+          <DialogHeader><DialogTitle>Add Aset Area Item</DialogTitle><DialogDescription>Tambah jenis aset area baru (e.g. Table Lamp, Floor Mat).</DialogDescription></DialogHeader>
+          <Input placeholder="e.g. Table Lamp" value={newItemName} onChange={(e) => setNewItemName(e.target.value)} autoFocus onKeyDown={(e) => { if (e.key === 'Enter') handleAddItem(); }} />
           <DialogFooter><Button variant="outline" onClick={() => setAddItemOpen(false)}>Cancel</Button><Button onClick={handleAddItem} disabled={!newItemName.trim()} className="gold-gradient text-navy hover:opacity-90">Add Item</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Add Storage dialog */}
-      <Dialog open={addStorageOpen} onOpenChange={setAddStorageOpen}>
+      {/* Add Location dialog */}
+      <Dialog open={addLocationOpen} onOpenChange={setAddLocationOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Add Storage Location</DialogTitle><DialogDescription>Tambah lokasi storage baru (e.g. Gudang 6A, Laundry Room).</DialogDescription></DialogHeader>
-          <Input placeholder="e.g. Gudang 6A" value={newStorageName} onChange={(e) => setNewStorageName(e.target.value)} autoFocus onKeyDown={(e) => { if (e.key === 'Enter') handleAddStorage(); }} />
-          <DialogFooter><Button variant="outline" onClick={() => setAddStorageOpen(false)}>Cancel</Button><Button onClick={handleAddStorage} disabled={!newStorageName.trim()} className="gold-gradient text-navy hover:opacity-90">Add Storage</Button></DialogFooter>
+          <DialogHeader><DialogTitle>Add Area Location</DialogTitle><DialogDescription>Tambah area location baru (e.g. Meeting Room, Pool Area).</DialogDescription></DialogHeader>
+          <Input placeholder="e.g. Meeting Room" value={newLocationName} onChange={(e) => setNewLocationName(e.target.value)} autoFocus onKeyDown={(e) => { if (e.key === 'Enter') handleAddLocation(); }} />
+          <DialogFooter><Button variant="outline" onClick={() => setAddLocationOpen(false)}>Cancel</Button><Button onClick={handleAddLocation} disabled={!newLocationName.trim()} className="gold-gradient text-navy hover:opacity-90">Add Location</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
