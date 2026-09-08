@@ -31,7 +31,10 @@ interface SyncResult {
   success: boolean;
   spreadsheetId?: string;
   spreadsheetUrl?: string;
-  rowsWritten?: number;
+  roomsWritten?: number;
+  cellsWritten?: number;
+  doneCells?: number;
+  inspectionAreas?: number;
   error?: string;
   warning?: string;
 }
@@ -119,7 +122,7 @@ export default function GoogleSyncPage() {
       if (data.success) {
         toast({
           title: 'Spreadsheet synced',
-          description: `${project.project_name} → ${data.rowsWritten} rows written to Sheet1.`,
+          description: `${data.roomsWritten} rooms × ${data.inspectionAreas} areas = ${data.cellsWritten} cells written (${data.doneCells} done).`,
         });
       } else {
         toast({
@@ -295,7 +298,7 @@ export default function GoogleSyncPage() {
                       {result?.success ? (
                         <p className="mt-1 flex items-center gap-1 text-xs text-emerald-700">
                           <CheckCircle2 className="h-3 w-3" />
-                          Synced · {result.rowsWritten} rows written
+                          Synced · {result.cellsWritten ?? 0} cells written ({result.doneCells ?? 0} done)
                           {result.spreadsheetUrl && (
                             <a
                               href={result.spreadsheetUrl}

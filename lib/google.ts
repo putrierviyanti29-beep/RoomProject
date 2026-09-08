@@ -128,68 +128,237 @@ export async function duplicateTemplateForProject(
 }
 
 /**
- * Writes a 2D array of values to a specific sheet starting at A1.
- * Used to push cleaning data into the duplicated monthly spreadsheet.
+ * Syncs data into the existing template structure (does NOT overwrite from A1).
  *
- * If sheetName is provided, writes to that sheet. Otherwise, auto-detects
- * the first sheet in the spreadsheet (handles cases where the sheet is not
- * named "Sheet1" — common with custom templates).
+ * Strategy:
+ * 1. Read the existing spreadsheet to find the header row ("Room Number")
+ * 2. Build a map: area_id → column_offset (by matching area names in header)
+ * 3. Build a map: room_number → row_index (by scanning column B for room numbers)
+ * 4. For each room in DB, find its row in the spreadsheet and write
+ *    [Date, Status, Done by] for each area to the correct columns
+ * 5. Update "Total Rooms" and "Percentage" cells at the bottom (per area)
+ *
+ * This preserves the template layout — only data cells are written.
  */
-export async function writeSheetData(
-  spreadsheetId: string,
-  sheetName: string | null,
-  values: (string | number | null)[][]
-): Promise<SyncResult> {
+export async function syncDataToTemplate(params: {
+  spreadsheetId: string;
+  rooms: { id: string; room_number: string }[];
+  specialCleaning: {
+    room_id: string;
+    area_id: string;
+    status: string;
+    completed_at: string | null;
+    profiles: { name: string } | null;
+  }[];
+  inspectionAreas: { id: string; name: string }[];
+}): Promise<SyncResult> {
   const env = getGoogleEnv();
   if (!env) {
-    return {
-      success: false,
-      error: 'Google Service Account credentials are not configured.',
-    };
+    return { success: false, error: 'Google Service Account credentials are not configured.' };
   }
+
+  const { spreadsheetId, rooms, specialCleaning, inspectionAreas } = params;
 
   try {
     const auth = getAuthClient(env);
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // If sheetName not provided, fetch spreadsheet metadata to get the first sheet's name
-    let targetSheet = sheetName;
-    if (!targetSheet) {
-      const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
-      const firstSheet = metaRes.data.sheets?.[0];
-      targetSheet = firstSheet?.properties?.title ?? 'Sheet1';
-    }
+    // 1. Get first sheet name
+    const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
+    const firstSheet = metaRes.data.sheets?.[0];
+    const sheetName = firstSheet?.properties?.title ?? 'Sheet1';
+    const safeSheetName = /^[\w]+$/.test(sheetName) ? sheetName : `'${sheetName}'`;
 
-    // Sanitize sheet name — if it contains spaces or special chars, wrap in quotes
-    const safeSheetName = /^[\w]+$/.test(targetSheet) ? targetSheet : `'${targetSheet}'`;
-
-    // First: clear existing data (so old data doesn't linger)
-    try {
-      await sheets.spreadsheets.values.clear({
-        spreadsheetId,
-        range: `${safeSheetName}!A1:Z10000`,
-      });
-    } catch (clearErr) {
-      console.warn('Sheet clear failed (continuing with update):', clearErr);
-    }
-
-    await sheets.spreadsheets.values.update({
+    // 2. Read existing values (rows 1-200, cols A-O) to find structure
+    const readRes = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${safeSheetName}!A1`,
-      valueInputOption: 'RAW',
+      range: `${safeSheetName}!A1:O200`,
+    });
+    const existingValues: (string | null)[][] = readRes.data.values ?? [];
+
+    // 3. Find header row (contains "Room Number" in any column)
+    let headerRowIdx = -1;
+    for (let i = 0; i < existingValues.length; i++) {
+      const row = existingValues[i] ?? [];
+      for (let col = 0; col < row.length; col++) {
+        if (String(row[col] ?? '').trim().toLowerCase() === 'room number') {
+          headerRowIdx = i;
+          break;
+        }
+      }
+      if (headerRowIdx >= 0) break;
+    }
+    if (headerRowIdx === -1) {
+      return {
+        success: false,
+        error: 'Could not find "Room Number" header row in spreadsheet. Make sure the template has a row with "Room Number" as a column header.',
+      };
+    }
+
+    // 4. Build area_id → column_offset map by matching area names in the header row
+    const headerRow = existingValues[headerRowIdx] ?? [];
+    const areaToColOffset: Record<string, number> = {};
+    for (let col = 0; col < headerRow.length; col++) {
+      const cellVal = String(headerRow[col] ?? '').trim().toLowerCase();
+      const matchedArea = inspectionAreas.find((a) => {
+        const areaName = a.name.trim().toLowerCase();
+        return cellVal === areaName || cellVal.includes(areaName) || areaName.includes(cellVal);
+      });
+      if (matchedArea && cellVal.length > 0) {
+        areaToColOffset[matchedArea.id] = col;
+      }
+    }
+
+    if (Object.keys(areaToColOffset).length === 0) {
+      return {
+        success: false,
+        error: `Could not match any inspection area names in the header row. Areas in DB: ${inspectionAreas.map((a) => `"${a.name}"`).join(', ')}. Header row content: ${JSON.stringify(headerRow)}`,
+      };
+    }
+
+    // 5. Build room_number → row_idx map by scanning column B (index 1) below header
+    const roomNumberToRow: Record<string, number> = {};
+    for (let i = headerRowIdx + 2; i < existingValues.length; i++) {
+      const cellVal = String(existingValues[i]?.[1] ?? '').trim();
+      if (/^\d+$/.test(cellVal)) {
+        roomNumberToRow[cellVal] = i; // 0-indexed
+      }
+    }
+
+    // 6. Build special_cleaning lookup: (room_id, area_id) → record
+    const scByKey = new Map<string, (typeof specialCleaning)[0]>();
+    specialCleaning.forEach((sc) => {
+      scByKey.set(`${sc.room_id}|${sc.area_id}`, sc);
+    });
+
+    // 7. Build batch update data
+    const dataUpdates: { range: string; values: (string | number)[][] }[] = [];
+    let totalRooms = 0;
+    const areaStats: Record<string, { total: number; done: number }> = {};
+    inspectionAreas.forEach((a) => {
+      areaStats[a.id] = { total: 0, done: 0 };
+    });
+
+    rooms.forEach((room) => {
+      const rowIdx = roomNumberToRow[room.room_number];
+      if (rowIdx === undefined) return; // Room not in spreadsheet — skip
+
+      totalRooms++;
+      const rowNumber = rowIdx + 1; // 1-indexed for Google API
+
+      inspectionAreas.forEach((area) => {
+        const colOffset = areaToColOffset[area.id];
+        if (colOffset === undefined) return; // Area column not in spreadsheet
+
+        const dateCol = columnToLetter(colOffset);
+        const statusCol = columnToLetter(colOffset + 1);
+        const doneByCol = columnToLetter(colOffset + 2);
+
+        const sc = scByKey.get(`${room.id}|${area.id}`);
+        areaStats[area.id].total++;
+
+        let dateStr = '';
+        let statusStr = 'Pending';
+        let doneBy = '';
+
+        if (sc && sc.status === 'done') {
+          areaStats[area.id].done++;
+          statusStr = 'Done';
+          if (sc.completed_at) {
+            dateStr = new Date(sc.completed_at).toLocaleDateString('en-US');
+          }
+          doneBy = sc.profiles?.name ?? '';
+        } else if (sc && sc.status === 'issue') {
+          statusStr = 'Issue';
+          if (sc.completed_at) {
+            dateStr = new Date(sc.completed_at).toLocaleDateString('en-US');
+          }
+          doneBy = sc.profiles?.name ?? '';
+        }
+
+        dataUpdates.push({
+          range: `${safeSheetName}!${dateCol}${rowNumber}`,
+          values: [[dateStr]],
+        });
+        dataUpdates.push({
+          range: `${safeSheetName}!${statusCol}${rowNumber}`,
+          values: [[statusStr]],
+        });
+        dataUpdates.push({
+          range: `${safeSheetName}!${doneByCol}${rowNumber}`,
+          values: [[doneBy]],
+        });
+      });
+    });
+
+    // 8. Update "Total Rooms" and "Percentage" cells (per area, at the bottom)
+    for (let i = 0; i < existingValues.length; i++) {
+      const row = existingValues[i] ?? [];
+      inspectionAreas.forEach((area) => {
+        const colOffset = areaToColOffset[area.id];
+        if (colOffset === undefined) return;
+
+        const cellVal = String(row[colOffset] ?? '').trim().toLowerCase();
+        if (cellVal === 'total rooms') {
+          const countCol = columnToLetter(colOffset + 1);
+          const rowNumber = i + 1;
+          dataUpdates.push({
+            range: `${safeSheetName}!${countCol}${rowNumber}`,
+            values: [[String(areaStats[area.id].total)]],
+          });
+        } else if (cellVal === 'percentage') {
+          const pctCol = columnToLetter(colOffset + 1);
+          const rowNumber = i + 1;
+          const total = areaStats[area.id].total;
+          const done = areaStats[area.id].done;
+          const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+          dataUpdates.push({
+            range: `${safeSheetName}!${pctCol}${rowNumber}`,
+            values: [[`${pct}%`]],
+          });
+        }
+      });
+    }
+
+    // 9. Execute batch update
+    if (dataUpdates.length === 0) {
+      return {
+        success: false,
+        error: 'No data to write. Make sure the spreadsheet has room numbers in column B that match rooms in the database.',
+      };
+    }
+
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
       requestBody: {
-        values,
+        valueInputOption: 'RAW',
+        data: dataUpdates,
       },
     });
 
-    return { success: true };
+    return {
+      success: true,
+      newSpreadsheetId: spreadsheetId,
+      newSpreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+    };
   } catch (err: any) {
-    console.error('Google writeSheetData error:', err);
+    console.error('syncDataToTemplate error:', err);
     return {
       success: false,
       error: err?.message ?? 'Unknown Google API error',
     };
   }
+}
+
+// Helper: convert column index (0-based) to letter (A, B, ..., Z, AA, AB, ...)
+function columnToLetter(col: number): string {
+  let letter = '';
+  let c = col;
+  while (c >= 0) {
+    letter = String.fromCharCode(65 + (c % 26)) + letter;
+    c = Math.floor(c / 26) - 1;
+  }
+  return letter;
 }
 
 /**

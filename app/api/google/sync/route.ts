@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import {
   duplicateTemplateForProject,
-  writeSheetData,
   isGoogleConfigured,
+  syncDataToTemplate,
 } from '@/lib/google';
 
 // ============================================================================
@@ -126,38 +126,32 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 5. Fetch all rooms + GC records for the project's month/year
-  const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
-  const startDate = `${yearMonth}-01`;
-  const endDay = new Date(year, month, 0).getDate();
-  const endDate = `${yearMonth}-${String(endDay).padStart(2, '0')}`;
-
-  const [roomsRes, gcRes, scRes] = await Promise.all([
+  // 5. Fetch all rooms + special_cleaning records for the selected project + inspection_areas
+  const [roomsRes, scRes, areasRes] = await Promise.all([
     supabase
       .from('rooms')
-      .select('id, room_number, section, floor, room_types(name)')
+      .select('id, room_number')
       .order('room_number', { ascending: true }),
     supabase
-      .from('general_cleaning')
-      .select('id, room_id, status, done_hk, done_eng, completed_at, date, profiles(name)')
-      .gte('date', startDate)
-      .lte('date', endDate),
+      .from('special_cleaning')
+      .select('id, room_id, area_id, status, completed_at, profiles(name)')
+      .eq('project_id', projectId),
     supabase
-      .from('special_checklists')
-      .select('id, item_name, status, completed_at, profiles(name)')
-      .eq('project_id', projectId)
-      .order('created_at', { ascending: true }),
+      .from('inspection_areas')
+      .select('id, name')
+      .eq('is_active', true)
+      .order('display_order', { ascending: true }),
   ]);
 
-  if (roomsRes.error || gcRes.error || scRes.error) {
+  if (roomsRes.error || scRes.error || areasRes.error) {
     return NextResponse.json(
       {
         success: false,
         error: 'Failed to fetch data from Supabase.',
         details: {
           rooms: roomsRes.error?.message,
-          gc: gcRes.error?.message,
           sc: scRes.error?.message,
+          areas: areasRes.error?.message,
         },
         spreadsheetId: targetSheetId,
         spreadsheetUrl: targetSheetUrl,
@@ -166,121 +160,51 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 6. Build sheet rows matching the spreadsheet layout
-  //    Section → Floor → Rooms (one row per room)
-  //    Columns: Section | Floor | Room | Type | Status | Done By | Done Type | Date
-  const rooms = roomsRes.data ?? [];
-  const gcRecords = gcRes.data ?? [];
+  const rooms = (roomsRes.data ?? []) as { id: string; room_number: string }[];
+  const specialCleaning = (scRes.data ?? []) as unknown as {
+    room_id: string;
+    area_id: string;
+    status: string;
+    completed_at: string | null;
+    profiles: { name: string } | null;
+  }[];
+  const inspectionAreas = (areasRes.data ?? []) as { id: string; name: string }[];
 
-  // Group rooms by section → floor
-  const grouped: Record<string, Record<number, any[]>> = {};
-  rooms.forEach((r: any) => {
-    const sec = r.section ?? 'Unassigned';
-    const fl = r.floor ?? 0;
-    if (!grouped[sec]) grouped[sec] = {};
-    if (!grouped[sec][fl]) grouped[sec][fl] = [];
-    grouped[sec][fl].push(r);
+  // 6. Sync data into the existing template structure (preserves layout!)
+  const syncResult = await syncDataToTemplate({
+    spreadsheetId: targetSheetId,
+    rooms,
+    specialCleaning,
+    inspectionAreas,
   });
 
-  const rows: (string | number | null)[][] = [];
-  rows.push(['Project', projectName]);
-  rows.push(['Period', `${String(month).padStart(2, '0')}/${year}`]);
-  rows.push(['Generated', new Date().toISOString()]);
-  rows.push([]);
-  rows.push([
-    'Section',
-    'Floor',
-    'Room',
-    'Type',
-    'Status',
-    'Done By',
-    'Done Type',
-    'Completed At',
-    'Date',
-  ]);
-
-  Object.keys(grouped)
-    .sort()
-    .forEach((section) => {
-      rows.push([`Section Gedung ${section}`]);
-      Object.keys(grouped[section])
-        .map(Number)
-        .sort((a, b) => a - b)
-        .forEach((floor) => {
-          rows.push(['', `FLOOR ${floor} ${section}`]);
-          grouped[section][floor].forEach((room: any) => {
-            // Find any done GC record for this room within the month
-            const roomGc = gcRecords
-              .filter((g: any) => g.room_id === room.id)
-              .sort((a: any, b: any) =>
-                String(a.completed_at).localeCompare(String(b.completed_at))
-              );
-            const lastDone = roomGc.find((g: any) => g.status === 'done');
-            const typeName = Array.isArray(room.room_types)
-              ? room.room_types[0]?.name ?? '—'
-              : room.room_types?.name ?? '—';
-            rows.push([
-              section,
-              floor,
-              room.room_number,
-              typeName,
-              lastDone ? 'done' : 'pending',
-              (lastDone?.profiles as any)?.name ?? '',
-              lastDone?.done_hk && lastDone?.done_eng
-                ? 'HK + ENG'
-                : lastDone?.done_hk
-                ? 'Housekeeping'
-                : lastDone?.done_eng
-                ? 'Engineering'
-                : '',
-              lastDone?.completed_at
-                ? new Date(lastDone.completed_at).toLocaleString('en-US')
-                : '',
-              lastDone?.date ?? '',
-            ]);
-          });
-        });
-    });
-
-  // Append Special Cleaning checklist summary
-  rows.push([]);
-  rows.push(['Special Cleaning Checklist']);
-  rows.push(['Item', 'Status', 'Done By', 'Completed At']);
-  (scRes.data ?? []).forEach((item: any) => {
-    rows.push([
-      item.item_name,
-      item.status,
-      (item as any).profiles?.name ?? '',
-      item.completed_at ? new Date(item.completed_at).toLocaleString('en-US') : '',
-    ]);
-  });
-
-  // 7. Write to the target spreadsheet (auto-detect first sheet)
-  const writeResult = await writeSheetData(
-    targetSheetId,
-    null, // null = auto-detect first sheet's name
-    rows
-  );
-
-  if (!writeResult.success) {
+  if (!syncResult.success) {
     return NextResponse.json(
       {
         success: false,
-        error: writeResult.error,
+        error: syncResult.error,
         spreadsheetId: targetSheetId,
         spreadsheetUrl: targetSheetUrl,
         warning:
-          'Spreadsheet ready but data could not be written. Open the sheet manually.',
+          'Spreadsheet accessible but data could not be written to template cells. Check error message.',
       },
       { status: 500 }
     );
   }
 
+  // Compute stats for the response
+  const totalRooms = rooms.length;
+  const totalCells = totalRooms * inspectionAreas.length;
+  const doneCells = specialCleaning.filter((sc) => sc.status === 'done').length;
+
   return NextResponse.json({
     success: true,
     spreadsheetId: targetSheetId,
     spreadsheetUrl: targetSheetUrl,
-    rowsWritten: rows.length,
+    roomsWritten: totalRooms,
+    cellsWritten: totalCells,
+    doneCells,
+    inspectionAreas: inspectionAreas.length,
     mode,
   });
 }
