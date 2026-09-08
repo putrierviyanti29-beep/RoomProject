@@ -1026,13 +1026,18 @@ export async function syncInventoryLinenToSheet(params: {
       const cellVal = String(headerRow[col] ?? '').trim().toLowerCase();
       if (cellVal === 'items') {
         // Found a block start — scan subsequent columns for locations
+        // Use case-insensitive keys so 'Linen Room' (DB) matches 'LINEN ROOM' (sheet)
         const locationCols = new Map<string, number>();
         for (let c = col + 1; c < headerRow.length; c++) {
           const locVal = String(headerRow[c] ?? '').trim();
           if (!locVal) continue;
           if (locVal.toLowerCase() === 'remarks') break; // end of block
-          // Could be room number (e.g. "301") or storage name (e.g. "Linen Room")
-          locationCols.set(locVal, c);
+          // Normalize: store lowercase key for case-insensitive matching
+          // But keep original value as a separate key too (for backward compat)
+          const normalizedKey = locVal.toLowerCase();
+          if (!locationCols.has(normalizedKey)) {
+            locationCols.set(normalizedKey, c);
+          }
         }
         blocks.push({ itemsCol: col, locationCols });
       }
@@ -1048,13 +1053,15 @@ export async function syncInventoryLinenToSheet(params: {
     let cellsWritten = 0;
 
     records.forEach((rec) => {
+      const normalizedRecLocation = rec.location.toLowerCase();
       blocks.forEach((block) => {
         // Find the row matching this item_name in this block's items column
+        // Use case-insensitive matching for item name too
         for (let r = 5; r < existingValues.length; r++) {
           const cellVal = String(existingValues[r]?.[block.itemsCol] ?? '').trim();
           if (cellVal.toLowerCase() === rec.item_name.toLowerCase()) {
-            // Found the row — now find the column for this location
-            const col = block.locationCols.get(rec.location);
+            // Found the row — now find the column for this location (case-insensitive)
+            const col = block.locationCols.get(normalizedRecLocation);
             if (col !== undefined) {
               const rowNumber = r + 1; // 1-indexed
               const colLetter = columnToLetter(col);
@@ -1071,9 +1078,31 @@ export async function syncInventoryLinenToSheet(params: {
     });
 
     if (dataUpdates.length === 0) {
+      // Build helpful debug info
+      const sampleRecs = records.slice(0, 5).map((r) => `${r.item_name}@${r.location}`);
+      const sampleBlocks = blocks.slice(0, 3).map((b, i) => {
+        const locs = Array.from(b.locationCols.keys()).slice(0, 5);
+        return `Block${i + 1}(itemsCol=${b.itemsCol}, locations=[${locs.join(', ')}...])`;
+      });
       return {
         success: false,
-        error: 'No matching cells found. Make sure item names and locations in the database match the sheet headers.',
+        error: `No matching cells found.
+
+Records from DB (sample): ${sampleRecs.join(' | ')}
+Total records: ${records.length}
+
+Blocks found in sheet (sample): ${sampleBlocks.join(' | ')}
+Total blocks: ${blocks.length}
+
+Common causes:
+1. Item names in DB don't match item names in sheet (case-insensitive match is used)
+2. Location names in DB don't match column headers in sheet
+   - DB has 'Linen Room' but sheet has 'LINEN ROOM' (handled, but verify)
+   - DB has 'Gudang 3C' but sheet Block 1 only has 'LINEN ROOM' column
+3. Records have count=0 and no row exists in sheet for that item
+
+Tip: Open the sheet and verify that item names in column C/M/AE/etc match
+the item_name values in your database.`,
       };
     }
 
