@@ -611,11 +611,15 @@ export async function syncGeneralCleaningToTemplate(params: {
 }
 
 /**
- * Duplicates both template sheets ("Special Cleaning TEMPLATE" and "Ganeral Cleaning TEMPLATE")
- * into new sheets named "{Month} {Year}" (e.g. "September 2026") within the same spreadsheet.
+ * Duplicates the SC template sheet AND the GC template sheet into
+ * monthly-named sheets: "{Month} {Year} - SC" and "{Month} {Year} - GC".
  *
- * If the monthly sheet already exists, it's NOT duplicated again (idempotent).
- * Returns the names of the created (or existing) sheets.
+ * Why two sheets? The SC template has 4 inspection areas (Toilet Bowl,
+ * Shower Glass, Kettle Jug, Scrubing Floor) per room, while the GC
+ * template has HK + ENG columns per room. They have different structures
+ * and must be kept in separate sheets.
+ *
+ * If the monthly sheets already exist, they're NOT duplicated again (idempotent).
  */
 export async function duplicateTemplateForCurrentMonth(params: {
   spreadsheetId: string;
@@ -637,7 +641,8 @@ export async function duplicateTemplateForCurrentMonth(params: {
   const year = params.year ?? now.getFullYear();
   const month = params.month ?? now.getMonth() + 1;
   const monthName = now.toLocaleString('en-US', { month: 'long' });
-  const monthSheetName = `${monthName} ${year}`;
+  const scSheetName = `${monthName} ${year} - SC`;
+  const gcSheetName = `${monthName} ${year} - GC`;
 
   try {
     const auth = getAuthClient(env);
@@ -664,54 +669,54 @@ export async function duplicateTemplateForCurrentMonth(params: {
       };
     }
 
-    // Check if monthly sheet already exists (idempotent)
-    const existingMonthly = allSheets.find((s) => s.properties?.title === monthSheetName);
+    // Check which monthly sheets already exist (idempotent)
+    const existingSc = allSheets.find((s) => s.properties?.title === scSheetName);
+    const existingGc = allSheets.find((s) => s.properties?.title === gcSheetName);
 
-    let scSheetName: string | undefined;
-    let gcSheetName: string | undefined;
+    let finalScName: string | undefined = existingSc ? scSheetName : undefined;
+    let finalGcName: string | undefined = existingGc ? gcSheetName : undefined;
 
-    if (existingMonthly) {
-      // Already exists — return it
-      return {
-        success: true,
-        scSheetName: monthSheetName,
-        gcSheetName: monthSheetName,
-      };
+    // Helper: duplicate a sheet & rename
+    const duplicateAndRename = async (sourceSheetId: number, newTitle: string): Promise<string | undefined> => {
+      const dupRes = await sheets.spreadsheets.sheets.copyTo({
+        spreadsheetId,
+        sheetId: sourceSheetId,
+        requestBody: { destinationSpreadsheetId: spreadsheetId },
+      });
+      const newSheetId = dupRes.data.sheetId;
+      if (newSheetId !== undefined && newSheetId !== null) {
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [
+              {
+                updateSheetProperties: {
+                  properties: { sheetId: newSheetId, title: newTitle },
+                  fields: 'title',
+                },
+              },
+            ],
+          },
+        });
+        return newTitle;
+      }
+      return undefined;
+    };
+
+    // Duplicate SC template if not exists
+    if (!finalScName) {
+      finalScName = await duplicateAndRename(scTemplate.properties?.sheetId!, scSheetName);
     }
 
-    // Duplicate SC template → rename to "{Month} {Year}"
-    const scDupRes = await sheets.spreadsheets.sheets.copyTo({
-      spreadsheetId,
-      sheetId: scTemplate.properties?.sheetId!,
-      requestBody: {
-        destinationSpreadsheetId: spreadsheetId,
-      },
-    });
-    const newScSheetId = scDupRes.data.sheetId;
-    if (newScSheetId !== undefined && newScSheetId !== null) {
-      await sheets.spreadsheets.batchUpdate({
-        spreadsheetId,
-        requestBody: {
-          requests: [
-            {
-              updateSheetProperties: {
-                properties: {
-                  sheetId: newScSheetId,
-                  title: monthSheetName,
-                },
-                fields: 'title',
-              },
-            },
-          ],
-        },
-      });
-      scSheetName = monthSheetName;
+    // Duplicate GC template if not exists
+    if (!finalGcName) {
+      finalGcName = await duplicateAndRename(gcTemplate.properties?.sheetId!, gcSheetName);
     }
 
     return {
       success: true,
-      scSheetName,
-      gcSheetName: scSheetName, // for now, we use the same sheet for both SC & GC
+      scSheetName: finalScName,
+      gcSheetName: finalGcName,
     };
   } catch (err: any) {
     console.error('duplicateTemplateForCurrentMonth error:', err);

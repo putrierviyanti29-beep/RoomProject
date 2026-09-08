@@ -115,14 +115,11 @@ export async function POST(req: NextRequest) {
     targetSheetUrl = `https://docs.google.com/spreadsheets/d/${targetSheetId}/edit`;
   }
 
-  // 3.5. Auto-duplicate template into monthly sheet ("{Month} {Year}")
-  //      This ensures a fresh sheet exists for the current month.
-  //      Idempotent — if sheet already exists, returns the existing name.
-  let monthlySheetName: string | undefined;
+  // 3.5. Auto-duplicate templates into monthly sheets ("{Month} {Year} - SC" and " - GC")
+  //      This ensures fresh sheets exist for the current month.
+  //      Idempotent — if sheets already exist, returns their names.
+  //      SC sync writes to scSheetName, GC sync writes to gcSheetName.
   const monthlyDup = await duplicateTemplateForCurrentMonth({ spreadsheetId: targetSheetId });
-  if (monthlyDup.success) {
-    monthlySheetName = monthlyDup.scSheetName;
-  }
   // If monthly dup fails, we fall back to writing to the template directly (legacy behavior)
 
   // 4. Pull data from Supabase (service role)
@@ -188,7 +185,7 @@ export async function POST(req: NextRequest) {
       date: targetDate,
       rooms,
       gcRecords,
-      targetSheetName: monthlySheetName,
+      targetSheetName: monthlyDup.gcSheetName,
     });
 
     if (!syncResult.success) {
@@ -271,7 +268,7 @@ export async function POST(req: NextRequest) {
     rooms,
     specialCleaning,
     inspectionAreas,
-    targetSheetName: monthlySheetName,
+    targetSheetName: monthlyDup.scSheetName,
   });
 
   if (!syncResult.success) {
