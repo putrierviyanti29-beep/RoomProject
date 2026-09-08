@@ -14,6 +14,7 @@ import {
   ListChecks,
   Upload,
   Sheet,
+  Package,
 } from 'lucide-react';
 import type { UserRole } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -29,6 +30,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'manager', 'supervisor'] },
   { label: 'General Cleaning', href: '/general-cleaning', icon: ClipboardCheck, roles: ['admin', 'manager', 'supervisor'] },
   { label: 'Special Cleaning', href: '/special-cleaning', icon: Sparkles, roles: ['admin', 'manager', 'supervisor'] },
+  { label: 'Inventory', href: '/inventory', icon: Package, roles: ['admin', 'manager', 'supervisor'] },
   { label: 'Room Management', href: '/rooms', icon: DoorOpen, roles: ['admin'] },
   { label: 'Import Rooms', href: '/import-rooms', icon: Upload, roles: ['admin'] },
   { label: 'Inspection Areas', href: '/inspection-areas', icon: ListChecks, roles: ['admin'] },
@@ -70,8 +72,8 @@ export function Sidebar({ role, pathname, mobileOpen, onCloseMobile }: SidebarPr
               <Hotel className="h-5 w-5 text-navy" />
             </div>
             <div>
-              <h1 className="font-display text-base font-semibold text-white leading-tight">Housekeeping</h1>
-              <p className="text-xs text-white/50">Manager</p>
+              <h1 className="font-display text-base font-semibold text-white leading-tight">Project &amp; Inventory</h1>
+              <p className="text-xs text-white/50">Management</p>
             </div>
           </Link>
           <button

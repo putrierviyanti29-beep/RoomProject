@@ -61,7 +61,7 @@ export function Topbar({ profile }: TopbarProps) {
         </Button>
         <div className="hidden md:block">
           <p className="text-sm font-medium text-foreground">{today}</p>
-          <p className="text-xs text-muted-foreground">Housekeeping Daily Overview</p>
+          <p className="text-xs text-muted-foreground">Project & Inventory Overview</p>
         </div>
       </div>
 

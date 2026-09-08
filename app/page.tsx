@@ -86,8 +86,8 @@ export default function LoginPage() {
             <Hotel className="h-6 w-6 text-navy" />
           </div>
           <div>
-            <h1 className="font-display text-xl font-semibold text-white">Housekeeping Manager</h1>
-            <p className="text-sm text-white/60">Hotel Daily Project Management</p>
+            <h1 className="font-display text-xl font-semibold text-white">Project &amp; Inventory</h1>
+            <p className="text-sm text-white/60">Management System</p>
           </div>
         </div>
 
@@ -144,8 +144,8 @@ export default function LoginPage() {
               <Hotel className="h-6 w-6 text-navy" />
             </div>
             <div>
-              <h1 className="font-display text-xl font-semibold">Housekeeping Manager</h1>
-              <p className="text-sm text-muted-foreground">Hotel Daily Project Management</p>
+              <h1 className="font-display text-xl font-semibold">Project &amp; Inventory</h1>
+              <p className="text-sm text-muted-foreground">Management System</p>
             </div>
           </div>
 
