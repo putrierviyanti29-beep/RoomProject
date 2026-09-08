@@ -120,7 +120,18 @@ export async function POST(req: NextRequest) {
   //      Idempotent — if sheets already exist, returns their names.
   //      SC sync writes to scSheetName, GC sync writes to gcSheetName.
   const monthlyDup = await duplicateTemplateForCurrentMonth({ spreadsheetId: targetSheetId });
-  // If monthly dup fails, we fall back to writing to the template directly (legacy behavior)
+  if (!monthlyDup.success) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: `Failed to create monthly sheets: ${monthlyDup.error}`,
+        hint: 'Verify that the template sheets are named "Special Cleaning TEMPLATE" and "Ganeral Cleaning TEMPLATE" (or similar) in your spreadsheet.',
+        spreadsheetId: targetSheetId,
+        spreadsheetUrl: targetSheetUrl,
+      },
+      { status: 500 }
+    );
+  }
 
   // 4. Pull data from Supabase (service role)
   let supabase;
