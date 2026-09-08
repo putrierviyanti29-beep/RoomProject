@@ -11,6 +11,8 @@ import {
   FileBarChart,
   Hotel,
   X,
+  ListChecks,
+  Upload,
 } from 'lucide-react';
 import type { UserRole } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -27,6 +29,8 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'General Cleaning', href: '/general-cleaning', icon: ClipboardCheck, roles: ['admin', 'manager', 'supervisor'] },
   { label: 'Special Cleaning', href: '/special-cleaning', icon: Sparkles, roles: ['admin', 'manager', 'supervisor'] },
   { label: 'Room Management', href: '/rooms', icon: DoorOpen, roles: ['admin'] },
+  { label: 'Import Rooms', href: '/import-rooms', icon: Upload, roles: ['admin'] },
+  { label: 'Inspection Areas', href: '/inspection-areas', icon: ListChecks, roles: ['admin'] },
   { label: 'User Management', href: '/users', icon: Users, roles: ['admin'] },
   { label: 'Reports', href: '/reports', icon: FileBarChart, roles: ['admin', 'manager'] },
 ];

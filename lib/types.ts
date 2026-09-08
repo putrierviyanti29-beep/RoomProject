@@ -18,20 +18,35 @@ export interface Room {
   id: string;
   room_number: string;
   room_type_id: string | null;
+  section: string | null; // 'A' | 'C' | custom
+  floor: number | null;   // 2 | 3 | 4 | 5
   created_at: string;
   room_types?: RoomType | null;
+}
+
+export type CleaningStatus = 'pending' | 'done' | 'issue';
+
+export interface InspectionArea {
+  id: string;
+  name: string;
+  display_order: number;
+  is_active: boolean;
+  created_at: string;
 }
 
 export interface GeneralCleaning {
   id: string;
   room_id: string;
-  status: 'pending' | 'done';
+  status: CleaningStatus;
   completed_by: string | null;
   completed_at: string | null;
   created_at: string;
   date: string;
+  notes: string | null;
+  area_id: string | null;
   rooms?: Room | null;
   profiles?: { name: string; email: string } | null;
+  inspection_areas?: InspectionArea | null;
 }
 
 export interface SpecialProject {
@@ -57,3 +72,12 @@ export const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
+
+// Default inspection areas (matching the spreadsheet template)
+// Used as fallback when DB inspection_areas table is empty
+export const DEFAULT_INSPECTION_AREAS = [
+  'Toilet Bowl',
+  'Shower Glass',
+  'Kettle Jug',
+  'Scrubing Floor',
+] as const;
