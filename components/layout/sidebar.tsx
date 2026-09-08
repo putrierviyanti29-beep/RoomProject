@@ -13,6 +13,7 @@ import {
   X,
   ListChecks,
   Upload,
+  Sheet,
 } from 'lucide-react';
 import type { UserRole } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -32,6 +33,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Import Rooms', href: '/import-rooms', icon: Upload, roles: ['admin'] },
   { label: 'Inspection Areas', href: '/inspection-areas', icon: ListChecks, roles: ['admin'] },
   { label: 'User Management', href: '/users', icon: Users, roles: ['admin'] },
+  { label: 'Google Sync', href: '/google-sync', icon: Sheet, roles: ['admin'] },
   { label: 'Reports', href: '/reports', icon: FileBarChart, roles: ['admin', 'manager'] },
 ];
 

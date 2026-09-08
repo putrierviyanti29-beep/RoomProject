@@ -116,7 +116,14 @@ export default function GeneralCleaningPage() {
 
   // Mark room as done with specific done_type (housekeeping or engineering)
   async function markDone(room: RoomWithGC, doneType: DoneType) {
-    if (!user || !canToggle) return;
+    if (!user) {
+      toast({ title: 'Not logged in', description: 'Please sign in to update cleaning status.', variant: 'destructive' });
+      return;
+    }
+    if (!canToggle) {
+      toast({ title: 'No permission', description: 'Your role does not allow updating cleaning status.', variant: 'destructive' });
+      return;
+    }
     const existing = room.general_cleaning[0];
     setUpdating(room.id);
 
@@ -133,7 +140,11 @@ export default function GeneralCleaningPage() {
           })
           .eq('id', existing.id);
         if (error) {
-          toast({ title: 'Error', description: error.message, variant: 'destructive' });
+          console.error('GC reset error:', error);
+          const hint = error.message.includes('done_type') || error.message.includes('column')
+            ? 'DB migration mungkin belum di-run. Jalankan file 20260908060000_refactor_cleaning_split.sql di Supabase SQL Editor.'
+            : error.message;
+          toast({ title: 'Gagal update', description: hint, variant: 'destructive' });
         } else {
           toast({ title: 'Marked as pending', description: `Room ${room.room_number}` });
         }
@@ -149,7 +160,11 @@ export default function GeneralCleaningPage() {
           })
           .eq('id', existing.id);
         if (error) {
-          toast({ title: 'Error', description: error.message, variant: 'destructive' });
+          console.error('GC done error:', error);
+          const hint = error.message.includes('done_type') || error.message.includes('column')
+            ? 'DB migration mungkin belum di-run. Jalankan file 20260908060000_refactor_cleaning_split.sql di Supabase SQL Editor.'
+            : error.message;
+          toast({ title: 'Gagal update', description: hint, variant: 'destructive' });
         } else {
           toast({
             title: `Done by ${doneType === 'housekeeping' ? 'Housekeeping' : 'Engineering'}`,
@@ -168,7 +183,11 @@ export default function GeneralCleaningPage() {
         date: selectedDate,
       });
       if (error) {
-        toast({ title: 'Error', description: error.message, variant: 'destructive' });
+        console.error('GC insert error:', error);
+        const hint = error.message.includes('done_type') || error.message.includes('column')
+          ? 'DB migration mungkin belum di-run. Jalankan file 20260908060000_refactor_cleaning_split.sql di Supabase SQL Editor.'
+          : error.message;
+        toast({ title: 'Gagal insert', description: hint, variant: 'destructive' });
       } else {
         toast({
           title: `Done by ${doneType === 'housekeeping' ? 'Housekeeping' : 'Engineering'}`,
@@ -181,7 +200,14 @@ export default function GeneralCleaningPage() {
   }
 
   async function clearRoom(room: RoomWithGC) {
-    if (!user || !canToggle) return;
+    if (!user) {
+      toast({ title: 'Not logged in', description: 'Please sign in.', variant: 'destructive' });
+      return;
+    }
+    if (!canToggle) {
+      toast({ title: 'No permission', description: 'Your role does not allow this.', variant: 'destructive' });
+      return;
+    }
     const existing = room.general_cleaning[0];
     if (!existing) return;
     setUpdating(room.id);
@@ -196,7 +222,11 @@ export default function GeneralCleaningPage() {
       })
       .eq('id', existing.id);
     if (error) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+      console.error('GC clear error:', error);
+      const hint = error.message.includes('done_type') || error.message.includes('column')
+        ? 'DB migration mungkin belum di-run.'
+        : error.message;
+      toast({ title: 'Gagal clear', description: hint, variant: 'destructive' });
     } else {
       toast({ title: 'Cleared', description: `Room ${room.room_number} reset to pending.` });
     }
