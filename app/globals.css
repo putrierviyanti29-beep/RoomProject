@@ -61,6 +61,9 @@
   .text-gold {
     color: hsl(var(--gold));
   }
+  .text-gold-light {
+    color: hsl(var(--gold-light));
+  }
   .bg-gold {
     background-color: hsl(var(--gold));
   }

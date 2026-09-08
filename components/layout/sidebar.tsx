@@ -116,9 +116,12 @@ export function Sidebar({ role, pathname, mobileOpen, onCloseMobile }: SidebarPr
         <nav className="flex-1 overflow-y-auto px-3 py-2">
           {visibleGroups.map((group, groupIdx) => (
             <div key={group.title} className={cn(groupIdx > 0 && 'mt-5')}>
-              <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-wider text-gold/80">
-                {group.title}
-              </p>
+              <div className="mb-2 flex items-center gap-2 px-3">
+                <p className="text-xs font-bold uppercase tracking-wider text-gold-light">
+                  {group.title}
+                </p>
+                <div className="h-px flex-1 bg-gradient-to-r from-gold/40 to-transparent" />
+              </div>
               <div className="space-y-0.5">
                 {group.items.map((item) => {
                   const active = pathname === item.href || pathname.startsWith(item.href + '/');
