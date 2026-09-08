@@ -1017,7 +1017,8 @@ export async function syncInventoryLinenToSheet(params: {
     const existingValues: (string | null)[][] = readRes.data.values ?? [];
 
     // Find all "ITEMS" header columns in row 4 (the header row)
-    // Each ITEMS column starts a new block
+    // Each ITEMS column starts a new block. The actual item names are in the
+    // column NEXT to ITEMS (e.g. B4='ITEMS', C6='Bath Towel' — so itemsCol = B+1 = C)
     const headerRowIdx = 3; // row 4 (0-indexed)
     const headerRow = existingValues[headerRowIdx] ?? [];
     const blocks: { itemsCol: number; locationCols: Map<string, number> }[] = [];
@@ -1025,21 +1026,29 @@ export async function syncInventoryLinenToSheet(params: {
     for (let col = 0; col < headerRow.length; col++) {
       const cellVal = String(headerRow[col] ?? '').trim().toLowerCase();
       if (cellVal === 'items') {
-        // Found a block start — scan subsequent columns for locations
+        // Found a block start — the ITEMS header is at `col`, but item NAMES
+        // are stored in the column right after it (col+1). The number column
+        // (1, 2, 3, ...) is at `col`, item name is at `col+1`.
+        const itemsNameCol = col + 1;
+
+        // Scan subsequent columns (starting from itemsNameCol+1) for locations
         // Use case-insensitive keys so 'Linen Room' (DB) matches 'LINEN ROOM' (sheet)
         const locationCols = new Map<string, number>();
-        for (let c = col + 1; c < headerRow.length; c++) {
+        for (let c = itemsNameCol + 1; c < headerRow.length; c++) {
           const locVal = String(headerRow[c] ?? '').trim();
           if (!locVal) continue;
           if (locVal.toLowerCase() === 'remarks') break; // end of block
-          // Normalize: store lowercase key for case-insensitive matching
-          // But keep original value as a separate key too (for backward compat)
-          const normalizedKey = locVal.toLowerCase();
+          // Room numbers in sheet are stored as numbers (e.g. 201.0)
+          // Convert to string without decimal: '201.0' → '201'
+          const normalizedLoc = /^-?\d+(\.\d+)?$/.test(locVal)
+            ? String(parseInt(locVal, 10))
+            : locVal;
+          const normalizedKey = normalizedLoc.toLowerCase();
           if (!locationCols.has(normalizedKey)) {
             locationCols.set(normalizedKey, c);
           }
         }
-        blocks.push({ itemsCol: col, locationCols });
+        blocks.push({ itemsCol: itemsNameCol, locationCols });
       }
     }
 
