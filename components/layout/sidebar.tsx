@@ -14,7 +14,9 @@ import {
   ListChecks,
   Upload,
   Sheet,
-  Package,
+  BedDouble,
+  Armchair,
+  Wrench,
 } from 'lucide-react';
 import type { UserRole } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -26,17 +28,39 @@ interface NavItem {
   roles: UserRole[];
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'manager', 'supervisor'] },
-  { label: 'General Cleaning', href: '/general-cleaning', icon: ClipboardCheck, roles: ['admin', 'manager', 'supervisor'] },
-  { label: 'Special Cleaning', href: '/special-cleaning', icon: Sparkles, roles: ['admin', 'manager', 'supervisor'] },
-  { label: 'Inventory', href: '/inventory', icon: Package, roles: ['admin', 'manager', 'supervisor'] },
-  { label: 'Room Management', href: '/rooms', icon: DoorOpen, roles: ['admin'] },
-  { label: 'Import Rooms', href: '/import-rooms', icon: Upload, roles: ['admin'] },
-  { label: 'Inspection Areas', href: '/inspection-areas', icon: ListChecks, roles: ['admin'] },
-  { label: 'User Management', href: '/users', icon: Users, roles: ['admin'] },
-  { label: 'Google Sync', href: '/google-sync', icon: Sheet, roles: ['admin'] },
-  { label: 'Reports', href: '/reports', icon: FileBarChart, roles: ['admin', 'manager'] },
+interface NavGroup {
+  title: string;
+  items: NavItem[];
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    title: 'Project',
+    items: [
+      { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'manager', 'supervisor'] },
+      { label: 'General Cleaning', href: '/general-cleaning', icon: ClipboardCheck, roles: ['admin', 'manager', 'supervisor'] },
+      { label: 'Special Cleaning', href: '/special-cleaning', icon: Sparkles, roles: ['admin', 'manager', 'supervisor'] },
+    ],
+  },
+  {
+    title: 'Inventory',
+    items: [
+      { label: 'Inventory Linen', href: '/inventory/linen', icon: BedDouble, roles: ['admin', 'manager', 'supervisor'] },
+      { label: 'Inventory Aset Room', href: '/inventory/aset-room', icon: Armchair, roles: ['admin', 'manager', 'supervisor'] },
+      { label: 'Inventory Equipment Room & Area', href: '/inventory/equipment', icon: Wrench, roles: ['admin', 'manager', 'supervisor'] },
+    ],
+  },
+  {
+    title: 'Admin',
+    items: [
+      { label: 'Room Management', href: '/rooms', icon: DoorOpen, roles: ['admin'] },
+      { label: 'Import Rooms', href: '/import-rooms', icon: Upload, roles: ['admin'] },
+      { label: 'Inspection Areas', href: '/inspection-areas', icon: ListChecks, roles: ['admin'] },
+      { label: 'User Management', href: '/users', icon: Users, roles: ['admin'] },
+      { label: 'Google Sync', href: '/google-sync', icon: Sheet, roles: ['admin'] },
+      { label: 'Reports', href: '/reports', icon: FileBarChart, roles: ['admin', 'manager'] },
+    ],
+  },
 ];
 
 interface SidebarProps {
@@ -47,7 +71,11 @@ interface SidebarProps {
 }
 
 export function Sidebar({ role, pathname, mobileOpen, onCloseMobile }: SidebarProps) {
-  const items = NAV_ITEMS.filter((item) => item.roles.includes(role));
+  // Filter items per group based on role
+  const visibleGroups = NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => item.roles.includes(role)),
+  })).filter((group) => group.items.length > 0);
 
   return (
     <>
@@ -84,35 +112,48 @@ export function Sidebar({ role, pathname, mobileOpen, onCloseMobile }: SidebarPr
           </button>
         </div>
 
-        {/* Navigation */}
-        <nav className="flex-1 space-y-1 px-3 py-4">
-          <p className="px-3 pb-2 text-xs font-medium uppercase tracking-wider text-white/30">Menu</p>
-          {items.map((item) => {
-            const active = pathname === item.href || pathname.startsWith(item.href + '/');
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={onCloseMobile}
-                className={cn(
-                  'group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-all',
-                  active
-                    ? 'bg-white/10 text-white'
-                    : 'text-white/60 hover:bg-white/5 hover:text-white'
-                )}
-              >
-                {active && (
-                  <motion.div
-                    layoutId="sidebar-active"
-                    className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-gold"
-                  />
-                )}
-                <Icon className={cn('h-5 w-5 transition-colors', active ? 'text-gold' : 'text-white/50 group-hover:text-white/80')} />
-                <span className="font-medium">{item.label}</span>
-              </Link>
-            );
-          })}
+        {/* Navigation — grouped with section headers */}
+        <nav className="flex-1 overflow-y-auto px-3 py-2">
+          {visibleGroups.map((group, groupIdx) => (
+            <div key={group.title} className={cn(groupIdx > 0 && 'mt-5')}>
+              <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-wider text-gold/80">
+                {group.title}
+              </p>
+              <div className="space-y-0.5">
+                {group.items.map((item) => {
+                  const active = pathname === item.href || pathname.startsWith(item.href + '/');
+                  const Icon = item.icon;
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={onCloseMobile}
+                      className={cn(
+                        'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all',
+                        active
+                          ? 'bg-white/10 text-white'
+                          : 'text-white/60 hover:bg-white/5 hover:text-white'
+                      )}
+                    >
+                      {active && (
+                        <motion.div
+                          layoutId={`sidebar-active-${group.title}`}
+                          className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-gold"
+                        />
+                      )}
+                      <Icon
+                        className={cn(
+                          'h-4 w-4 flex-shrink-0 transition-colors',
+                          active ? 'text-gold' : 'text-white/50 group-hover:text-white/80'
+                        )}
+                      />
+                      <span className="font-medium leading-tight">{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
         {/* Footer */}
