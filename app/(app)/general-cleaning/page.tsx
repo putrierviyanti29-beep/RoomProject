@@ -70,10 +70,18 @@ export default function GeneralCleaningPage() {
     if (gcRes.error) {
       console.error('GC fetch error:', gcRes.error);
       const msg = gcRes.error.message || '';
-      const hint =
-        msg.includes('done_type') || msg.includes('column')
-          ? 'Database migration belum di-run. Jalankan file supabase/migrations/20260908060000_refactor_cleaning_split.sql di Supabase SQL Editor.'
-          : `Supabase error: ${msg}`;
+      const code = (gcRes.error as any)?.code || '';
+      let hint: string;
+      if (msg.includes('done_type') || msg.includes('column')) {
+        hint = `Migration belum di-run atau belum selesai. Jalankan 3 file SQL ini di Supabase SQL Editor secara berurutan:
+1. supabase/migrations/20260908060000_refactor_cleaning_split.sql
+2. supabase/migrations/20260908060001_refactor_cleaning_split_idempotent.sql (safe re-run)
+3. supabase/migrations/20260908060002_fix_profiles_fk_and_cache.sql`;
+      } else if (msg.includes('profiles') && msg.includes('relationship')) {
+        hint = `FK relationship ke profiles belum terdaftar. Jalankan file: 20260908060002_fix_profiles_fk_and_cache.sql di Supabase SQL Editor.`;
+      } else {
+        hint = `Supabase error [${code}]: ${msg}`;
+      }
       setFetchError(hint);
       toast({
         title: 'Gagal memuat data cleaning',
