@@ -255,10 +255,10 @@ export async function POST(req: NextRequest) {
     ]);
   });
 
-  // 7. Write to the target spreadsheet (Sheet1)
+  // 7. Write to the target spreadsheet (auto-detect first sheet)
   const writeResult = await writeSheetData(
     targetSheetId,
-    'Sheet1',
+    null, // null = auto-detect first sheet's name
     rows
   );
 

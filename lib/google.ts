@@ -128,12 +128,16 @@ export async function duplicateTemplateForProject(
 }
 
 /**
- * Writes a 2D array of values to a specific sheet (gid) starting at A1.
+ * Writes a 2D array of values to a specific sheet starting at A1.
  * Used to push cleaning data into the duplicated monthly spreadsheet.
+ *
+ * If sheetName is provided, writes to that sheet. Otherwise, auto-detects
+ * the first sheet in the spreadsheet (handles cases where the sheet is not
+ * named "Sheet1" — common with custom templates).
  */
 export async function writeSheetData(
   spreadsheetId: string,
-  sheetName: string,
+  sheetName: string | null,
   values: (string | number | null)[][]
 ): Promise<SyncResult> {
   const env = getGoogleEnv();
@@ -148,20 +152,30 @@ export async function writeSheetData(
     const auth = getAuthClient(env);
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // First: try to clear existing data in the sheet (so old data doesn't linger)
+    // If sheetName not provided, fetch spreadsheet metadata to get the first sheet's name
+    let targetSheet = sheetName;
+    if (!targetSheet) {
+      const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
+      const firstSheet = metaRes.data.sheets?.[0];
+      targetSheet = firstSheet?.properties?.title ?? 'Sheet1';
+    }
+
+    // Sanitize sheet name — if it contains spaces or special chars, wrap in quotes
+    const safeSheetName = /^[\w]+$/.test(targetSheet) ? targetSheet : `'${targetSheet}'`;
+
+    // First: clear existing data (so old data doesn't linger)
     try {
       await sheets.spreadsheets.values.clear({
         spreadsheetId,
-        range: `${sheetName}!A1:Z10000`,
+        range: `${safeSheetName}!A1:Z10000`,
       });
     } catch (clearErr) {
-      // Non-fatal — continue with update
       console.warn('Sheet clear failed (continuing with update):', clearErr);
     }
 
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `${sheetName}!A1`,
+      range: `${safeSheetName}!A1`,
       valueInputOption: 'RAW',
       requestBody: {
         values,
