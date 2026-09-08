@@ -151,22 +151,38 @@ export async function syncDataToTemplate(params: {
     profiles: { name: string } | null;
   }[];
   inspectionAreas: { id: string; name: string }[];
+  targetSheetName?: string; // optional — if not provided, use first sheet
 }): Promise<SyncResult> {
   const env = getGoogleEnv();
   if (!env) {
     return { success: false, error: 'Google Service Account credentials are not configured.' };
   }
 
-  const { spreadsheetId, rooms, specialCleaning, inspectionAreas } = params;
+  const { spreadsheetId, rooms, specialCleaning, inspectionAreas, targetSheetName } = params;
 
   try {
     const auth = getAuthClient(env);
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // 1. Get first sheet name
-    const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
-    const firstSheet = metaRes.data.sheets?.[0];
-    const sheetName = firstSheet?.properties?.title ?? 'Sheet1';
+    // 1. Get target sheet name — either explicit or first sheet
+    let sheetName: string;
+    if (targetSheetName) {
+      // Verify the sheet exists
+      const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
+      const allSheets = metaRes.data.sheets ?? [];
+      const found = allSheets.find((s) => s.properties?.title === targetSheetName);
+      if (!found) {
+        return {
+          success: false,
+          error: `Sheet "${targetSheetName}" not found. Available: ${allSheets.map((s) => s.properties?.title).join(', ')}`,
+        };
+      }
+      sheetName = targetSheetName;
+    } else {
+      const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
+      const firstSheet = metaRes.data.sheets?.[0];
+      sheetName = firstSheet?.properties?.title ?? 'Sheet1';
+    }
     const safeSheetName = /^[\w]+$/.test(sheetName) ? sheetName : `'${sheetName}'`;
 
     // 2. Read existing values (rows 1-200, cols A-O) to find structure
@@ -387,30 +403,44 @@ export async function syncGeneralCleaningToTemplate(params: {
     completed_at: string | null;
     profiles: { name: string } | null;
   }[];
+  targetSheetName?: string; // optional — if not provided, find by name or fall back to sheet 2
 }): Promise<SyncResult> {
   const env = getGoogleEnv();
   if (!env) {
     return { success: false, error: 'Google Service Account credentials are not configured.' };
   }
 
-  const { spreadsheetId, date, rooms, gcRecords } = params;
+  const { spreadsheetId, date, rooms, gcRecords, targetSheetName } = params;
 
   try {
     const auth = getAuthClient(env);
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // 1. Get all sheets — find General Cleaning sheet (or fall back to sheet 2, or sheet 1)
+    // 1. Get all sheets — find General Cleaning sheet
     const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
     const allSheets = metaRes.data.sheets ?? [];
     if (allSheets.length === 0) {
       return { success: false, error: 'Spreadsheet has no sheets.' };
     }
 
-    let targetSheet = allSheets.find((s) => {
-      const title = (s.properties?.title ?? '').toLowerCase();
-      return title.includes('general') && title.includes('cleaning');
-    });
-    if (!targetSheet) targetSheet = allSheets[1] ?? allSheets[0]; // fall back to 2nd sheet, or 1st
+    let targetSheet;
+    if (targetSheetName) {
+      // Use the provided sheet name (for monthly duplicates like "September 2026")
+      targetSheet = allSheets.find((s) => s.properties?.title === targetSheetName);
+      if (!targetSheet) {
+        return {
+          success: false,
+          error: `Sheet "${targetSheetName}" not found. Available sheets: ${allSheets.map((s) => s.properties?.title).join(', ')}`,
+        };
+      }
+    } else {
+      // Find General Cleaning sheet (handle typo "Ganeral")
+      targetSheet = allSheets.find((s) => {
+        const title = (s.properties?.title ?? '').toLowerCase();
+        return title.includes('general') || title.includes('ganeral');
+      });
+      if (!targetSheet) targetSheet = allSheets[1] ?? allSheets[0]; // fall back to 2nd sheet, or 1st
+    }
     const sheetName = targetSheet?.properties?.title ?? 'Sheet1';
     const safeSheetName = /^[\w]+$/.test(sheetName) ? sheetName : `'${sheetName}'`;
 
@@ -440,61 +470,37 @@ export async function syncGeneralCleaningToTemplate(params: {
       };
     }
 
-    // 4. Find HK column & ENG column (match common header variants)
+    // 4. Find HK block start & ENG block start in header row
+    //    Template structure:
+    //    D5='HOUSEKEEPING' → block starts at D (Date=D, Status=E, Done by=F)
+    //    G5='ENGINEERING'  → block starts at G (Date=G, Status=H, Done by=I)
     const headerRow = existingValues[headerRowIdx] ?? [];
-    let hkColOffset = -1;
-    let engColOffset = -1;
-    let hkDateColOffset = -1;
-    let engDateColOffset = -1;
+    let hkBlockStart = -1;
+    let engBlockStart = -1;
 
     for (let col = 0; col < headerRow.length; col++) {
       const cellVal = String(headerRow[col] ?? '').trim().toLowerCase();
-      // HK columns
       if (
-        (cellVal === 'hk' ||
-          cellVal === 'housekeeping' ||
-          cellVal === 'done by hk' ||
-          cellVal === 'done by housekeeping' ||
-          cellVal === 'hk done') &&
-        hkColOffset === -1
+        (cellVal === 'housekeeping' || cellVal === 'hk' || cellVal === 'done by hk') &&
+        hkBlockStart === -1
       ) {
-        hkColOffset = col;
-      }
-      // ENG columns
-      else if (
-        (cellVal === 'eng' ||
-          cellVal === 'engineering' ||
-          cellVal === 'done by eng' ||
-          cellVal === 'done by engineering' ||
-          cellVal === 'eng done') &&
-        engColOffset === -1
+        hkBlockStart = col;
+      } else if (
+        (cellVal === 'engineering' || cellVal === 'eng' || cellVal === 'done by eng') &&
+        engBlockStart === -1
       ) {
-        engColOffset = col;
+        engBlockStart = col;
       }
     }
 
-    // Also try to find date columns next to HK / ENG
-    if (hkColOffset >= 0) {
-      const next = String(headerRow[hkColOffset + 1] ?? '').trim().toLowerCase();
-      if (next === 'date' || next === 'time' || next === 'completed at' || next === 'completed') {
-        hkDateColOffset = hkColOffset + 1;
-      }
-    }
-    if (engColOffset >= 0) {
-      const next = String(headerRow[engColOffset + 1] ?? '').trim().toLowerCase();
-      if (next === 'date' || next === 'time' || next === 'completed at' || next === 'completed') {
-        engDateColOffset = engColOffset + 1;
-      }
-    }
-
-    if (hkColOffset === -1 && engColOffset === -1) {
+    if (hkBlockStart === -1 && engBlockStart === -1) {
       return {
         success: false,
-        error: `Could not find HK or ENG columns in sheet "${sheetName}" header row. Header content: ${JSON.stringify(headerRow)}. Expected one of: HK, Housekeeping, Done by HK, ENG, Engineering, Done by ENG.`,
+        error: `Could not find HOUSEKEEPING or ENGINEERING columns in sheet "${sheetName}" header row. Header content: ${JSON.stringify(headerRow)}`,
       };
     }
 
-    // 5. Build room_number → row_idx map
+    // 5. Build room_number → row_idx map (column B, below header)
     const roomNumberToRow: Record<string, number> = {};
     for (let i = headerRowIdx + 1; i < existingValues.length; i++) {
       const cellVal = String(existingValues[i]?.[1] ?? '').trim();
@@ -508,6 +514,10 @@ export async function syncGeneralCleaningToTemplate(params: {
     gcRecords.forEach((g) => gcByRoom.set(g.room_id, g));
 
     // 7. Build batch update data
+    //    For each room, write 3 cells per block:
+    //      Date col = completion date (if done) or empty
+    //      Status col = 'Done' (if done) or 'Pending'
+    //      Done by col = profile name (if done) or empty
     const dataUpdates: { range: string; values: (string | number)[][] }[] = [];
     let roomsWithHK = 0;
     let roomsWithENG = 0;
@@ -522,48 +532,51 @@ export async function syncGeneralCleaningToTemplate(params: {
 
       roomsWritten++;
 
-      if (hkColOffset >= 0) {
-        const hkCol = columnToLetter(hkColOffset);
-        const hkValue = gc?.done_hk ? (gc.profiles?.name ?? 'Done') : '';
+      const dateStr = gc?.completed_at
+        ? new Date(gc.completed_at).toLocaleDateString('en-US')
+        : '';
+      const doneByName = gc?.profiles?.name ?? '';
+
+      // HK block: Date | Status | Done by
+      if (hkBlockStart >= 0) {
+        const dateCol = columnToLetter(hkBlockStart);
+        const statusCol = columnToLetter(hkBlockStart + 1);
+        const doneByCol = columnToLetter(hkBlockStart + 2);
+
         dataUpdates.push({
-          range: `${safeSheetName}!${hkCol}${rowNumber}`,
-          values: [[hkValue]],
+          range: `${safeSheetName}!${dateCol}${rowNumber}`,
+          values: [[gc?.done_hk ? dateStr : '']],
+        });
+        dataUpdates.push({
+          range: `${safeSheetName}!${statusCol}${rowNumber}`,
+          values: [[gc?.done_hk ? 'Done' : 'Pending']],
+        });
+        dataUpdates.push({
+          range: `${safeSheetName}!${doneByCol}${rowNumber}`,
+          values: [[gc?.done_hk ? doneByName : '']],
         });
         if (gc?.done_hk) roomsWithHK++;
-
-        if (hkDateColOffset >= 0) {
-          const dateCol = columnToLetter(hkDateColOffset);
-          const dateValue =
-            gc?.done_hk && gc.completed_at
-              ? new Date(gc.completed_at).toLocaleDateString('en-US')
-              : '';
-          dataUpdates.push({
-            range: `${safeSheetName}!${dateCol}${rowNumber}`,
-            values: [[dateValue]],
-          });
-        }
       }
 
-      if (engColOffset >= 0) {
-        const engCol = columnToLetter(engColOffset);
-        const engValue = gc?.done_eng ? (gc.profiles?.name ?? 'Done') : '';
+      // ENG block: Date | Status | Done by
+      if (engBlockStart >= 0) {
+        const dateCol = columnToLetter(engBlockStart);
+        const statusCol = columnToLetter(engBlockStart + 1);
+        const doneByCol = columnToLetter(engBlockStart + 2);
+
         dataUpdates.push({
-          range: `${safeSheetName}!${engCol}${rowNumber}`,
-          values: [[engValue]],
+          range: `${safeSheetName}!${dateCol}${rowNumber}`,
+          values: [[gc?.done_eng ? dateStr : '']],
+        });
+        dataUpdates.push({
+          range: `${safeSheetName}!${statusCol}${rowNumber}`,
+          values: [[gc?.done_eng ? 'Done' : 'Pending']],
+        });
+        dataUpdates.push({
+          range: `${safeSheetName}!${doneByCol}${rowNumber}`,
+          values: [[gc?.done_eng ? doneByName : '']],
         });
         if (gc?.done_eng) roomsWithENG++;
-
-        if (engDateColOffset >= 0) {
-          const dateCol = columnToLetter(engDateColOffset);
-          const dateValue =
-            gc?.done_eng && gc.completed_at
-              ? new Date(gc.completed_at).toLocaleDateString('en-US')
-              : '';
-          dataUpdates.push({
-            range: `${safeSheetName}!${dateCol}${rowNumber}`,
-            values: [[dateValue]],
-          });
-        }
       }
     });
 
@@ -590,6 +603,118 @@ export async function syncGeneralCleaningToTemplate(params: {
     };
   } catch (err: any) {
     console.error('syncGeneralCleaningToTemplate error:', err);
+    return {
+      success: false,
+      error: err?.message ?? 'Unknown Google API error',
+    };
+  }
+}
+
+/**
+ * Duplicates both template sheets ("Special Cleaning TEMPLATE" and "Ganeral Cleaning TEMPLATE")
+ * into new sheets named "{Month} {Year}" (e.g. "September 2026") within the same spreadsheet.
+ *
+ * If the monthly sheet already exists, it's NOT duplicated again (idempotent).
+ * Returns the names of the created (or existing) sheets.
+ */
+export async function duplicateTemplateForCurrentMonth(params: {
+  spreadsheetId: string;
+  year?: number; // defaults to current year
+  month?: number; // 1-12, defaults to current month
+}): Promise<{
+  success: boolean;
+  scSheetName?: string;
+  gcSheetName?: string;
+  error?: string;
+}> {
+  const env = getGoogleEnv();
+  if (!env) {
+    return { success: false, error: 'Google Service Account credentials are not configured.' };
+  }
+
+  const { spreadsheetId } = params;
+  const now = new Date();
+  const year = params.year ?? now.getFullYear();
+  const month = params.month ?? now.getMonth() + 1;
+  const monthName = now.toLocaleString('en-US', { month: 'long' });
+  const monthSheetName = `${monthName} ${year}`;
+
+  try {
+    const auth = getAuthClient(env);
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    // Get spreadsheet metadata
+    const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
+    const allSheets = metaRes.data.sheets ?? [];
+
+    // Find template sheets
+    const scTemplate = allSheets.find((s) => {
+      const title = (s.properties?.title ?? '').toLowerCase();
+      return title.includes('special') && title.includes('cleaning');
+    });
+    const gcTemplate = allSheets.find((s) => {
+      const title = (s.properties?.title ?? '').toLowerCase();
+      return title.includes('general') || title.includes('ganeral');
+    });
+
+    if (!scTemplate || !gcTemplate) {
+      return {
+        success: false,
+        error: `Could not find template sheets. Found: ${allSheets.map((s) => s.properties?.title).join(', ')}`,
+      };
+    }
+
+    // Check if monthly sheet already exists (idempotent)
+    const existingMonthly = allSheets.find((s) => s.properties?.title === monthSheetName);
+
+    let scSheetName: string | undefined;
+    let gcSheetName: string | undefined;
+
+    if (existingMonthly) {
+      // Already exists — return it
+      return {
+        success: true,
+        scSheetName: monthSheetName,
+        gcSheetName: monthSheetName,
+      };
+    }
+
+    // Duplicate SC template → rename to "{Month} {Year}"
+    const scDupRes = await sheets.spreadsheets.sheets.copyTo({
+      spreadsheetId,
+      sheetId: scTemplate.properties?.sheetId!,
+      requestBody: {
+        destinationSpreadsheetId: spreadsheetId,
+      },
+    });
+    const newScSheetId = scDupRes.data.sheetId;
+    if (newScSheetId !== undefined && newScSheetId !== null) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              updateSheetProperties: {
+                properties: {
+                  sheetId: newScSheetId,
+                  title: monthSheetName,
+                },
+                fields: 'title',
+              },
+            },
+          ],
+        },
+      });
+      scSheetName = monthSheetName;
+    }
+
+    return {
+      success: true,
+      scSheetName,
+      gcSheetName: scSheetName, // for now, we use the same sheet for both SC & GC
+    };
+  } catch (err: any) {
+    console.error('duplicateTemplateForCurrentMonth error:', err);
     return {
       success: false,
       error: err?.message ?? 'Unknown Google API error',
