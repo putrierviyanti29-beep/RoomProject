@@ -40,13 +40,16 @@ import {
 } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
-import type { SpecialProject, SpecialChecklist, MONTH_NAMES } from '@/lib/types';
+import type { SpecialProject, SpecialChecklist } from '@/lib/types';
+import { MONTH_NAMES } from '@/lib/types';
 
 export default function SpecialCleaningPage() {
   const { user, profile } = useAuth();
   const { toast } = useToast();
   const isAdmin = profile?.role === 'admin';
   const isSupervisor = profile?.role === 'supervisor';
+  const isManager = profile?.role === 'manager';
+  const canToggle = isSupervisor || isAdmin || isManager;
 
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<SpecialProject[]>([]);
@@ -85,7 +88,7 @@ export default function SpecialCleaningPage() {
       .select('id, project_id, item_name, status, completed_by, completed_at, created_at, profiles(name, email)')
       .eq('project_id', selectedProject.id)
       .order('created_at', { ascending: true });
-    setChecklists((data ?? []) as SpecialChecklist[]);
+    setChecklists((data ?? []) as unknown as SpecialChecklist[]);
     setChecklistLoading(false);
   }, [selectedProject]);
 
@@ -343,7 +346,7 @@ export default function SpecialCleaningPage() {
                             >
                               <Checkbox
                                 checked={isDone}
-                                disabled={!isSupervisor || updating === item.id}
+                                disabled={!canToggle || updating === item.id}
                                 onCheckedChange={() => toggleChecklistItem(item)}
                                 className="data-[state=checked]:bg-emerald-500 data-[state=checked]:border-emerald-500"
                               />
@@ -379,12 +382,12 @@ export default function SpecialCleaningPage() {
                       </AnimatePresence>
                     </div>
                   )}
-                  {!isSupervisor && !isAdmin && (
+                  {!canToggle && (
                     <p className="mt-4 text-center text-sm text-muted-foreground">
-                      View-only access. Supervisors can update checklist status.
+                      View-only access. Supervisors, managers, and admins can update checklist status.
                     </p>
                   )}
-                </>
+                </CardContent>
               </>
             ) : (
               <CardContent className="flex h-[500px] flex-col items-center justify-center gap-3">

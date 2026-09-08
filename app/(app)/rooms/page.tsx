@@ -70,7 +70,7 @@ export default function RoomsPage() {
       .from('rooms')
       .select('id, room_number, room_type_id, created_at, room_types(id, name)')
       .order('room_number', { ascending: true });
-    setRooms(data ?? []);
+    setRooms((data ?? []) as unknown as Room[]);
     setLoading(false);
   }, []);
 

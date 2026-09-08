@@ -22,6 +22,8 @@ import {
   Legend,
 } from 'recharts';
 import { supabase } from '@/lib/supabase/client';
+import { useAuth } from '@/lib/auth-context';
+import { useRouter } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -60,6 +62,8 @@ interface SCReportRow {
 
 export default function ReportsPage() {
   const { toast } = useToast();
+  const { profile, loading: authLoading } = useAuth();
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [gcData, setGcData] = useState<GCReportRow[]>([]);
   const [scData, setScData] = useState<SCReportRow[]>([]);
@@ -70,6 +74,13 @@ export default function ReportsPage() {
     return d.toISOString().split('T')[0];
   });
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+
+  // Role guard: only admin & manager can view reports
+  useEffect(() => {
+    if (!authLoading && profile && profile.role !== 'admin' && profile.role !== 'manager') {
+      router.replace('/dashboard');
+    }
+  }, [authLoading, profile, router]);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -83,8 +94,10 @@ export default function ReportsPage() {
         .order('date', { ascending: false }),
       supabase
         .from('special_checklists')
-        .select('item_name, status, completed_at, special_projects!inner(project_name, month, year), profiles(name)')
-        .order('completed_at', { ascending: false }),
+        .select('item_name, status, completed_at, created_at, special_projects!inner(project_name, month, year), profiles(name)')
+        .gte('created_at', `${startDate}T00:00:00`)
+        .lte('created_at', `${endDate}T23:59:59`)
+        .order('completed_at', { ascending: false, nullsFirst: false }),
     ]);
 
     const gcRows: GCReportRow[] = (gcRes.data ?? []).map((g: any) => ({
@@ -133,6 +146,15 @@ export default function ReportsPage() {
     fetchReports();
   }, [fetchReports]);
 
+  // Block rendering until role is verified
+  if (authLoading || !profile || (profile.role !== 'admin' && profile.role !== 'manager')) {
+    return (
+      <div className="flex h-[60vh] items-center justify-center">
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </div>
+    );
+  }
+
   function exportCSV(data: Record<string, unknown>[], filename: string) {
     if (data.length === 0) {
       toast({ title: 'No Data', description: 'There is no data to export.', variant: 'destructive' });
@@ -165,7 +187,6 @@ export default function ReportsPage() {
   const gcPending = gcData.filter((r) => r.status === 'pending').length;
   const scDone = scData.filter((r) => r.status === 'done').length;
   const scTotal = scData.length;
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -234,7 +255,7 @@ export default function ReportsPage() {
                     <CardTitle className="text-lg">General Cleaning Report</CardTitle>
                     <p className="text-sm text-muted-foreground">{gcData.length} records in selected range</p>
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => exportCSV(gcData, 'general-cleaning-report.csv')}>
+                  <Button size="sm" variant="outline" onClick={() => exportCSV(gcData as unknown as Record<string, unknown>[], 'general-cleaning-report.csv')}>
                     <Download className="mr-2 h-4 w-4" />
                     Export CSV
                   </Button>
@@ -344,7 +365,7 @@ export default function ReportsPage() {
                     <CardTitle className="text-lg">Special Cleaning Report</CardTitle>
                     <p className="text-sm text-muted-foreground">{scData.length} checklist items</p>
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => exportCSV(scData, 'special-cleaning-report.csv')}>
+                  <Button size="sm" variant="outline" onClick={() => exportCSV(scData as unknown as Record<string, unknown>[], 'special-cleaning-report.csv')}>
                     <Download className="mr-2 h-4 w-4" />
                     Export CSV
                   </Button>

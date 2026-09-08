@@ -35,6 +35,9 @@ export default function GeneralCleaningPage() {
   const [updating, setUpdating] = useState<string | null>(null);
 
   const isSupervisor = profile?.role === 'supervisor';
+  const isAdmin = profile?.role === 'admin';
+  const isManager = profile?.role === 'manager';
+  const canToggle = isSupervisor || isAdmin || isManager;
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -49,12 +52,13 @@ export default function GeneralCleaningPage() {
       .eq('date', selectedDate);
 
     const gcByRoom = new Map<string, GeneralCleaning>();
-    (gcData ?? []).forEach((g) => gcByRoom.set(g.room_id, g as GeneralCleaning));
+    (gcData ?? []).forEach((g) => gcByRoom.set(g.room_id, g as unknown as GeneralCleaning));
 
     const merged = (roomsData ?? []).map((r) => ({
       ...r,
+      room_types: Array.isArray(r.room_types) ? r.room_types[0] ?? null : r.room_types,
       general_cleaning: gcByRoom.has(r.id) ? [gcByRoom.get(r.id)!] : [],
-    }));
+    })) as RoomWithGC[];
 
     setRooms(merged);
     setLoading(false);
@@ -226,7 +230,7 @@ export default function GeneralCleaningPage() {
                   className={`card-shadow-lg cursor-pointer transition-all hover:scale-[1.02] ${
                     isDone ? 'border-emerald-200 bg-emerald-50/50' : ''
                   }`}
-                  onClick={() => isSupervisor && toggleCleaning(room)}
+                  onClick={() => canToggle && toggleCleaning(room)}
                 >
                   <CardContent className="p-5">
                     <div className="flex items-start justify-between">
@@ -238,7 +242,9 @@ export default function GeneralCleaningPage() {
                       </div>
                       <Checkbox
                         checked={isDone}
-                        disabled={!isSupervisor || updating === room.id}
+                        disabled={!canToggle || updating === room.id}
+                        onCheckedChange={() => canToggle && toggleCleaning(room)}
+                        onClick={(e) => e.stopPropagation()}
                         className="data-[state=checked]:bg-emerald-500 data-[state=checked]:border-emerald-500"
                       />
                     </div>
@@ -275,9 +281,9 @@ export default function GeneralCleaningPage() {
         </div>
       )}
 
-      {!isSupervisor && (
+      {!canToggle && (
         <p className="text-center text-sm text-muted-foreground">
-          You have view-only access. Switch to a supervisor account to update cleaning status.
+          You have view-only access. Switch to a supervisor, manager, or admin account to update cleaning status.
         </p>
       )}
     </div>

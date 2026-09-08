@@ -35,15 +35,25 @@ export function useDashboardStats() {
   const fetchStats = useCallback(async () => {
     const today = new Date().toISOString().split('T')[0];
 
-    const [roomsRes, gcTodayRes, gcRecentRes, spRes, scRes] = await Promise.all([
+    // Compute date 7 days ago for the weekly chart
+    const weekAgoDate = new Date();
+    weekAgoDate.setDate(weekAgoDate.getDate() - 6);
+    const weekAgo = weekAgoDate.toISOString().split('T')[0];
+
+    const [roomsRes, gcTodayRes, gcRecentRes, gcWeekRes, spRes, scRes] = await Promise.all([
       supabase.from('rooms').select('id', { count: 'exact', head: true }),
-      supabase.from('general_cleaning').select('id, status').eq('date', today),
+      supabase.from('general_cleaning').select('id, status, date').eq('date', today),
       supabase
         .from('general_cleaning')
         .select('id, completed_at, completed_by, rooms!inner(room_number), profiles!inner(name)')
         .eq('status', 'done')
         .order('completed_at', { ascending: false })
         .limit(5),
+      supabase
+        .from('general_cleaning')
+        .select('id, status, date')
+        .gte('date', weekAgo)
+        .lte('date', today),
       supabase.from('special_projects').select('id, project_name, month, year'),
       supabase.from('special_checklists').select('id, status, project_id'),
     ]);
@@ -60,24 +70,25 @@ export function useDashboardStats() {
     const specialTotal = specialChecklists.length;
     const specialProgress = specialTotal > 0 ? Math.round((specialCompleted / specialTotal) * 100) : 0;
 
-    // Monthly data: last 7 days
-    const monthlyData: { date: string; completed: number; total: number }[] = [];
+    // Weekly data: last 7 days, using real GC records grouped by date
+    const gcWeek = gcWeekRes.data ?? [];
+    const weeklyData: { date: string; completed: number; total: number }[] = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
-      const dayRecords = gcToday.filter((g) => g.date === dateStr || (i === 0));
-      monthlyData.push({
+      const dayRecords = gcWeek.filter((g) => g.date === dateStr);
+      weeklyData.push({
         date: d.toLocaleDateString('en-US', { weekday: 'short' }),
-        completed: i === 0 ? completedToday : 0,
-        total: i === 0 ? gcToday.length : 0,
+        completed: dayRecords.filter((g) => g.status === 'done').length,
+        total: dayRecords.length,
       });
     }
 
-    const recentActivity = (gcRecentRes.data ?? []).map((item) => ({
+    const recentActivity = (gcRecentRes.data ?? []).map((item: any) => ({
       id: item.id,
-      room_number: item.rooms?.room_number ?? '—',
-      completed_by: item.profiles?.name ?? 'Unknown',
+      room_number: Array.isArray(item.rooms) ? item.rooms[0]?.room_number ?? '—' : item.rooms?.room_number ?? '—',
+      completed_by: Array.isArray(item.profiles) ? item.profiles[0]?.name ?? 'Unknown' : item.profiles?.name ?? 'Unknown',
       completed_at: item.completed_at ?? '',
     }));
 
@@ -90,7 +101,7 @@ export function useDashboardStats() {
       specialCompleted,
       specialTotal,
       specialProgress,
-      monthlyData,
+      monthlyData: weeklyData,
       recentActivity,
       loading: false,
     });

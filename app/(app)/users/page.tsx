@@ -67,7 +67,7 @@ export default function UsersPage() {
       name: p.name || 'Unknown',
       role: p.role,
       created_at: p.created_at,
-      email: p.id === profile?.id ? profile.email : '—',
+      email: p.id === profile?.id ? (profile?.email ?? '—') : '—',
     }));
 
     setUsers(rows);

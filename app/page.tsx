@@ -23,7 +23,7 @@ export default function LoginPage() {
   const [signUpName, setSignUpName] = useState('');
   const [signUpEmail, setSignUpEmail] = useState('');
   const [signUpPassword, setSignUpPassword] = useState('');
-  const [signUpRole, setSignUpRole] = UserRole<'admin' | 'manager' | 'supervisor'>('supervisor') as UserRole | undefined;
+  const [signUpRole, setSignUpRole] = useState<UserRole>('supervisor');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
