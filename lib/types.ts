@@ -141,7 +141,7 @@ export interface InventoryLinen {
   profiles?: { name: string } | null;
 }
 
-// Default linen items (matching the template's first 7 rows)
+// Default linen items (matching the template's 16 rows)
 export const DEFAULT_LINEN_ITEMS = [
   'Bath Towel',
   'Bath Mat',
@@ -150,6 +150,15 @@ export const DEFAULT_LINEN_ITEMS = [
   'Bed sheet Karet',
   'Bed Sheet King',
   'Pillow case',
+  'Duvet Cover twin A',
+  'Duvet Cover twin C',
+  'Duvet Twin garis',
+  'Duvet Cover King',
+  'Bed Pad twin',
+  'Bed Pad King',
+  'Duvet Insert twin',
+  'Duvet Insert King',
+  'Hand towel',
 ] as const;
 
 // Default storage locations (Block 1 of the template)
