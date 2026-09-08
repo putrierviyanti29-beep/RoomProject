@@ -148,6 +148,17 @@ export async function writeSheetData(
     const auth = getAuthClient(env);
     const sheets = google.sheets({ version: 'v4', auth });
 
+    // First: try to clear existing data in the sheet (so old data doesn't linger)
+    try {
+      await sheets.spreadsheets.values.clear({
+        spreadsheetId,
+        range: `${sheetName}!A1:Z10000`,
+      });
+    } catch (clearErr) {
+      // Non-fatal — continue with update
+      console.warn('Sheet clear failed (continuing with update):', clearErr);
+    }
+
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: `${sheetName}!A1`,
@@ -160,6 +171,61 @@ export async function writeSheetData(
     return { success: true };
   } catch (err: any) {
     console.error('Google writeSheetData error:', err);
+    return {
+      success: false,
+      error: err?.message ?? 'Unknown Google API error',
+    };
+  }
+}
+
+/**
+ * Lists all spreadsheets owned by the service account.
+ * Useful for cleanup (when Drive quota is exceeded).
+ */
+export async function listServiceAccountFiles(): Promise<{ id: string; name: string; size: string }[] | { error: string }> {
+  const env = getGoogleEnv();
+  if (!env) {
+    return { error: 'Google Service Account credentials are not configured.' };
+  }
+
+  try {
+    const auth = getAuthClient(env);
+    const drive = google.drive({ version: 'v3', auth });
+
+    const res = await drive.files.list({
+      q: "mimeType='application/vnd.google-apps.spreadsheet'",
+      fields: 'files(id, name, size)',
+      orderBy: 'modifiedTime desc',
+      pageSize: 100,
+    });
+
+    return (res.data.files ?? []).map((f) => ({
+      id: f.id ?? '',
+      name: f.name ?? '',
+      size: f.size ?? '0',
+    }));
+  } catch (err: any) {
+    console.error('Google listServiceAccountFiles error:', err);
+    return { error: err?.message ?? 'Unknown Google API error' };
+  }
+}
+
+/**
+ * Deletes a file owned by the service account (to free up Drive quota).
+ */
+export async function deleteServiceAccountFile(fileId: string): Promise<SyncResult> {
+  const env = getGoogleEnv();
+  if (!env) {
+    return { success: false, error: 'Google Service Account credentials are not configured.' };
+  }
+
+  try {
+    const auth = getAuthClient(env);
+    const drive = google.drive({ version: 'v3', auth });
+    await drive.files.delete({ fileId });
+    return { success: true };
+  } catch (err: any) {
+    console.error('Google deleteServiceAccountFile error:', err);
     return {
       success: false,
       error: err?.message ?? 'Unknown Google API error',

@@ -91,6 +91,7 @@ export default function GoogleSyncPage() {
           projectName: project.project_name,
           month: project.month,
           year: project.year,
+          mode: 'write', // write directly to template — avoids Drive quota issues
         }),
       });
       const data: SyncResult = await res.json();
@@ -98,8 +99,8 @@ export default function GoogleSyncPage() {
 
       if (data.success) {
         toast({
-          title: 'Spreadsheet created',
-          description: `${project.project_name} → ${data.rowsWritten} rows written.`,
+          title: 'Spreadsheet synced',
+          description: `${project.project_name} → ${data.rowsWritten} rows written to Sheet1.`,
         });
       } else {
         toast({
@@ -305,11 +306,11 @@ export default function GoogleSyncPage() {
             How it works
           </p>
           <ul className="list-inside list-disc space-y-1">
-            <li>The service account duplicates your master template for each project.</li>
-            <li>The new spreadsheet is named &quot;{`{ProjectName} — {Month} {Year}`}&quot;.</li>
-            <li>Cleaning data (rooms, status, done type, completed_at, special cleaning checklist) is written into Sheet1 of the new file.</li>
-            <li>You can re-sync a project any time — it creates a fresh copy with the latest data.</li>
-            <li>Service account credentials are stored only in Vercel env vars — never in the database.</li>
+            <li>Sync writes data langsung ke spreadsheet template kamu (Sheet1).</li>
+            <li>Tidak ada duplication file — jadi tidak akan habis Drive quota service account.</li>
+            <li>Setiap sync akan <strong>overwrite</strong> data lama di Sheet1 dengan data terbaru.</li>
+            <li>Untuk backup bulanan, klik <strong>File → Make a copy</strong> di Google Sheets secara manual.</li>
+            <li>Data yang di-write: Project info, semua kamar dengan status (HK/ENG/Both), dan checklist Special Cleaning.</li>
           </ul>
         </CardContent>
       </Card>

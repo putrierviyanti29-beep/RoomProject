@@ -65,13 +65,27 @@ export async function POST(req: NextRequest) {
   }
 
   // 2. Parse body
-  let body: { projectId?: string; projectName?: string; month?: number; year?: number };
+  let body: {
+    projectId?: string;
+    projectName?: string;
+    month?: number;
+    year?: number;
+    mode?: 'duplicate' | 'write'; // default: 'write' (avoids Drive quota issues)
+    targetSpreadsheetId?: string; // for 'write' mode — defaults to template ID
+  };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ success: false, error: 'Invalid JSON body' }, { status: 400 });
   }
-  const { projectId, projectName, month, year } = body;
+  const {
+    projectId,
+    projectName,
+    month,
+    year,
+    mode = 'write', // default: write directly to template (no duplication)
+    targetSpreadsheetId,
+  } = body;
   if (!projectId || !projectName || !month || !year) {
     return NextResponse.json(
       { success: false, error: 'Missing required fields: projectId, projectName, month, year' },
@@ -79,10 +93,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 3. Duplicate the template
-  const dupResult = await duplicateTemplateForProject(projectName, month, year);
-  if (!dupResult.success || !dupResult.newSpreadsheetId || !dupResult.newSpreadsheetUrl) {
-    return NextResponse.json(dupResult, { status: 500 });
+  // 3. Determine target spreadsheet
+  let targetSheetId: string;
+  let targetSheetUrl: string;
+  if (mode === 'duplicate') {
+    const dupResult = await duplicateTemplateForProject(projectName, month, year);
+    if (!dupResult.success || !dupResult.newSpreadsheetId || !dupResult.newSpreadsheetUrl) {
+      return NextResponse.json(dupResult, { status: 500 });
+    }
+    targetSheetId = dupResult.newSpreadsheetId;
+    targetSheetUrl = dupResult.newSpreadsheetUrl;
+  } else {
+    // Write mode: use provided targetSpreadsheetId, or fall back to the template ID
+    targetSheetId = targetSpreadsheetId || process.env.GOOGLE_TEMPLATE_SPREADSHEET_ID!;
+    targetSheetUrl = `https://docs.google.com/spreadsheets/d/${targetSheetId}/edit`;
   }
 
   // 4. Pull data from Supabase (service role)
@@ -94,9 +118,9 @@ export async function POST(req: NextRequest) {
       {
         success: false,
         error: e.message,
-        spreadsheetId: dupResult.newSpreadsheetId,
-        spreadsheetUrl: dupResult.newSpreadsheetUrl,
-        warning: 'Template was duplicated but data could not be exported. Open the new sheet manually.',
+        spreadsheetId: targetSheetId,
+        spreadsheetUrl: targetSheetUrl,
+        warning: 'Spreadsheet ready but data could not be exported. Open the sheet manually.',
       },
       { status: 500 }
     );
@@ -115,7 +139,7 @@ export async function POST(req: NextRequest) {
       .order('room_number', { ascending: true }),
     supabase
       .from('general_cleaning')
-      .select('id, room_id, status, done_type, completed_at, date, profiles(name)')
+      .select('id, room_id, status, done_hk, done_eng, completed_at, date, profiles(name)')
       .gte('date', startDate)
       .lte('date', endDate),
     supabase
@@ -135,8 +159,8 @@ export async function POST(req: NextRequest) {
           gc: gcRes.error?.message,
           sc: scRes.error?.message,
         },
-        spreadsheetId: dupResult.newSpreadsheetId,
-        spreadsheetUrl: dupResult.newSpreadsheetUrl,
+        spreadsheetId: targetSheetId,
+        spreadsheetUrl: targetSheetUrl,
       },
       { status: 500 }
     );
@@ -202,9 +226,11 @@ export async function POST(req: NextRequest) {
               typeName,
               lastDone ? 'done' : 'pending',
               (lastDone?.profiles as any)?.name ?? '',
-              lastDone?.done_type === 'housekeeping'
+              lastDone?.done_hk && lastDone?.done_eng
+                ? 'HK + ENG'
+                : lastDone?.done_hk
                 ? 'Housekeeping'
-                : lastDone?.done_type === 'engineering'
+                : lastDone?.done_eng
                 ? 'Engineering'
                 : '',
               lastDone?.completed_at
@@ -229,11 +255,9 @@ export async function POST(req: NextRequest) {
     ]);
   });
 
-  // 7. Write to the new spreadsheet
-  //    The template uses sheet name "Rooming List" — but we write to the FIRST sheet
-  //    (sheetId 0) to be safe across different template configurations.
+  // 7. Write to the target spreadsheet (Sheet1)
   const writeResult = await writeSheetData(
-    dupResult.newSpreadsheetId,
+    targetSheetId,
     'Sheet1',
     rows
   );
@@ -243,10 +267,10 @@ export async function POST(req: NextRequest) {
       {
         success: false,
         error: writeResult.error,
-        spreadsheetId: dupResult.newSpreadsheetId,
-        spreadsheetUrl: dupResult.newSpreadsheetUrl,
+        spreadsheetId: targetSheetId,
+        spreadsheetUrl: targetSheetUrl,
         warning:
-          'Template was duplicated but data could not be written. Open the new sheet manually.',
+          'Spreadsheet ready but data could not be written. Open the sheet manually.',
       },
       { status: 500 }
     );
@@ -254,9 +278,10 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     success: true,
-    spreadsheetId: dupResult.newSpreadsheetId,
-    spreadsheetUrl: dupResult.newSpreadsheetUrl,
+    spreadsheetId: targetSheetId,
+    spreadsheetUrl: targetSheetUrl,
     rowsWritten: rows.length,
+    mode,
   });
 }
 
