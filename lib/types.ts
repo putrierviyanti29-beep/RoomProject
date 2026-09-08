@@ -102,3 +102,24 @@ export const DEFAULT_INSPECTION_AREAS = [
   'Kettle Jug',
   'Scrubing Floor',
 ] as const;
+
+// ============================================================================
+// Inventory Equipment — matches the "Inventory Equipment TEMPLATE" sheet
+// ============================================================================
+export interface InventoryEquipment {
+  id: string;
+  no: number;
+  item_name: string;
+  previous_balance: number;
+  new_purchase: number;
+  condition_good: number;
+  condition_broken: number;
+  closing_inventory: number;
+  need_to_purchase: number;
+  price_per_unit: number;
+  total_price: number; // computed: need_to_purchase * price_per_unit
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  profiles?: { name: string } | null;
+}

@@ -6,6 +6,7 @@ import {
   syncDataToTemplate,
   syncGeneralCleaningToTemplate,
   duplicateTemplateForCurrentMonth,
+  syncEquipmentToSheet,
 } from '@/lib/google';
 
 // ============================================================================
@@ -74,7 +75,7 @@ export async function POST(req: NextRequest) {
     year?: number;
     mode?: 'duplicate' | 'write'; // default: 'write' (avoids Drive quota issues)
     targetSpreadsheetId?: string; // for 'write' mode — defaults to template ID
-    type?: 'sc' | 'gc'; // 'sc' = Special Cleaning (default), 'gc' = General Cleaning
+    type?: 'sc' | 'gc' | 'equipment'; // 'sc' = Special Cleaning (default), 'gc' = General Cleaning, 'equipment' = Inventory Equipment
     date?: string; // for 'gc' mode — YYYY-MM-DD, defaults to today
   };
   try {
@@ -225,6 +226,68 @@ export async function POST(req: NextRequest) {
       doneENG,
       type: 'gc',
       date: targetDate,
+      mode,
+    });
+  }
+
+  // === EQUIPMENT INVENTORY SYNC ===
+  if (type === 'equipment') {
+    const { data: equipData, error: equipErr } = await supabase
+      .from('inventory_equipment')
+      .select('no, item_name, previous_balance, new_purchase, condition_good, condition_broken, closing_inventory, need_to_purchase, price_per_unit')
+      .order('no', { ascending: true });
+
+    if (equipErr) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Failed to fetch equipment data: ${equipErr.message}`,
+          spreadsheetId: targetSheetId,
+          spreadsheetUrl: targetSheetUrl,
+        },
+        { status: 500 }
+      );
+    }
+
+    const equipment = (equipData ?? []) as Array<{
+      no: number;
+      item_name: string;
+      previous_balance: number;
+      new_purchase: number;
+      condition_good: number;
+      condition_broken: number;
+      closing_inventory: number;
+      need_to_purchase: number;
+      price_per_unit: number;
+    }>;
+
+    const syncResult = await syncEquipmentToSheet({
+      spreadsheetId: targetSheetId,
+      targetSheetName: monthlyDup.equipmentSheetName,
+      equipment,
+      date: new Date().toISOString().split('T')[0],
+    });
+
+    if (!syncResult.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: syncResult.error,
+          spreadsheetId: targetSheetId,
+          spreadsheetUrl: targetSheetUrl,
+          warning: 'Spreadsheet accessible but equipment data could not be written.',
+        },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      spreadsheetId: targetSheetId,
+      spreadsheetUrl: targetSheetUrl,
+      sheetName: monthlyDup.equipmentSheetName,
+      itemsWritten: equipment.length,
+      type: 'equipment',
       mode,
     });
   }

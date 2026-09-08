@@ -611,26 +611,36 @@ export async function syncGeneralCleaningToTemplate(params: {
 }
 
 /**
- * Duplicates the SC template sheet AND the GC template sheet into
- * monthly-named sheets: "{Month} {Year} - SC" and "{Month} {Year} - GC".
+ * Duplicates ALL template sheets into monthly-named sheets:
+ * - "{Month} {Year} - SC"      ← from "Special Cleaning TEMPLATE"
+ * - "{Month} {Year} - GC"      ← from "Ganeral Cleaning TEMPLATE"
+ * - "{Month} {Year} - Linen"   ← from "Inventory Linen TEMPLATE"
+ * - "{Month} {Year} - AsetRoom" ← from "Inventory Aset Room TEMPLATE"
+ * - "{Month} {Year} - AsetArea" ← from "Inventory Aset Area TEMPLATE" (if exists)
+ * - "{Month} {Year} - Equipment" ← from "Inventory Equipment TEMPLATE"
  *
- * Why two sheets? The SC template has 4 inspection areas (Toilet Bowl,
- * Shower Glass, Kettle Jug, Scrubing Floor) per room, while the GC
- * template has HK + ENG columns per room. They have different structures
- * and must be kept in separate sheets.
+ * Why separate sheets? Each template has different structure (matrix vs flat table,
+ * different columns) and must be kept separate.
  *
- * If the monthly sheets already exist, they're NOT duplicated again (idempotent).
+ * Idempotent — skips sheets that already exist.
+ * Returns a map of template_key → monthly_sheet_name.
  */
-export async function duplicateTemplateForCurrentMonth(params: {
-  spreadsheetId: string;
-  year?: number; // defaults to current year
-  month?: number; // 1-12, defaults to current month
-}): Promise<{
+export interface MonthlyDupResult {
   success: boolean;
   scSheetName?: string;
   gcSheetName?: string;
+  linenSheetName?: string;
+  asetRoomSheetName?: string;
+  asetAreaSheetName?: string;
+  equipmentSheetName?: string;
   error?: string;
-}> {
+}
+
+export async function duplicateTemplateForCurrentMonth(params: {
+  spreadsheetId: string;
+  year?: number;
+  month?: number;
+}): Promise<MonthlyDupResult> {
   const env = getGoogleEnv();
   if (!env) {
     return { success: false, error: 'Google Service Account credentials are not configured.' };
@@ -641,40 +651,48 @@ export async function duplicateTemplateForCurrentMonth(params: {
   const year = params.year ?? now.getFullYear();
   const month = params.month ?? now.getMonth() + 1;
   const monthName = now.toLocaleString('en-US', { month: 'long' });
-  const scSheetName = `${monthName} ${year} - SC`;
-  const gcSheetName = `${monthName} ${year} - GC`;
+
+  // Template → monthly suffix mapping
+  const templates: Array<{
+    key: 'sc' | 'gc' | 'linen' | 'asetRoom' | 'asetArea' | 'equipment';
+    nameField: keyof Omit<MonthlyDupResult, 'success' | 'error'>;
+    matchKeywords: string[]; // any of these keywords in title → match
+    suffix: string; // e.g. "- SC"
+  }> = [
+    { key: 'sc', nameField: 'scSheetName', matchKeywords: ['special', 'cleaning'], suffix: ' - SC' },
+    { key: 'gc', nameField: 'gcSheetName', matchKeywords: ['general', 'ganeral'], suffix: ' - GC' },
+    { key: 'linen', nameField: 'linenSheetName', matchKeywords: ['linen'], suffix: ' - Linen' },
+    { key: 'asetRoom', nameField: 'asetRoomSheetName', matchKeywords: ['aset', 'asset', 'room'], suffix: ' - AsetRoom' },
+    { key: 'asetArea', nameField: 'asetAreaSheetName', matchKeywords: ['aset', 'asset', 'area'], suffix: ' - AsetArea' },
+    { key: 'equipment', nameField: 'equipmentSheetName', matchKeywords: ['equipment'], suffix: ' - Equipment' },
+  ];
 
   try {
     const auth = getAuthClient(env);
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // Get spreadsheet metadata
     const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
     const allSheets = metaRes.data.sheets ?? [];
 
-    // Find template sheets
-    const scTemplate = allSheets.find((s) => {
-      const title = (s.properties?.title ?? '').toLowerCase();
-      return title.includes('special') && title.includes('cleaning');
-    });
-    const gcTemplate = allSheets.find((s) => {
-      const title = (s.properties?.title ?? '').toLowerCase();
-      return title.includes('general') || title.includes('ganeral');
-    });
-
-    if (!scTemplate || !gcTemplate) {
-      return {
-        success: false,
-        error: `Could not find template sheets. Found: ${allSheets.map((s) => s.properties?.title).join(', ')}`,
-      };
+    // Find each template sheet by matching keywords in the title
+    // Special: 'aset' templates need 2-step matching (room vs area)
+    const foundTemplates: Record<string, any> = {};
+    for (const t of templates) {
+      const candidates = allSheets.filter((s) => {
+        const title = (s.properties?.title ?? '').toLowerCase();
+        if (!title.includes('template')) return false;
+        // For aset room vs aset area, we need to distinguish
+        if (t.key === 'asetRoom') {
+          return title.includes('aset') && title.includes('room') && !title.includes('area');
+        }
+        if (t.key === 'asetArea') {
+          return title.includes('aset') && title.includes('area');
+        }
+        // For others, all keywords must be present
+        return t.matchKeywords.every((kw) => title.includes(kw));
+      });
+      foundTemplates[t.key] = candidates[0] ?? null;
     }
-
-    // Check which monthly sheets already exist (idempotent)
-    const existingSc = allSheets.find((s) => s.properties?.title === scSheetName);
-    const existingGc = allSheets.find((s) => s.properties?.title === gcSheetName);
-
-    let finalScName: string | undefined = existingSc ? scSheetName : undefined;
-    let finalGcName: string | undefined = existingGc ? gcSheetName : undefined;
 
     // Helper: duplicate a sheet & rename
     const duplicateAndRename = async (sourceSheetId: number, newTitle: string): Promise<string | undefined> => {
@@ -703,21 +721,26 @@ export async function duplicateTemplateForCurrentMonth(params: {
       return undefined;
     };
 
-    // Duplicate SC template if not exists
-    if (!finalScName) {
-      finalScName = await duplicateAndRename(scTemplate.properties?.sheetId!, scSheetName);
+    const result: MonthlyDupResult = { success: true };
+    const monthSheetPrefix = `${monthName} ${year}`;
+
+    for (const t of templates) {
+      const templateSheet = foundTemplates[t.key];
+      if (!templateSheet) continue; // template doesn't exist — skip
+      const monthlyName = `${monthSheetPrefix}${t.suffix}`;
+      // Check if monthly sheet already exists
+      const existing = allSheets.find((s) => s.properties?.title === monthlyName);
+      if (existing) {
+        (result as any)[t.nameField] = monthlyName;
+      } else {
+        const created = await duplicateAndRename(templateSheet.properties?.sheetId!, monthlyName);
+        if (created) {
+          (result as any)[t.nameField] = created;
+        }
+      }
     }
 
-    // Duplicate GC template if not exists
-    if (!finalGcName) {
-      finalGcName = await duplicateAndRename(gcTemplate.properties?.sheetId!, gcSheetName);
-    }
-
-    return {
-      success: true,
-      scSheetName: finalScName,
-      gcSheetName: finalGcName,
-    };
+    return result;
   } catch (err: any) {
     console.error('duplicateTemplateForCurrentMonth error:', err);
     return {
@@ -812,4 +835,117 @@ export async function listSpreadsheets(): Promise<{ id: string; name: string }[]
     return { error: err?.message ?? 'Unknown Google API error' };
   }
 }
+
+/**
+ * Syncs Inventory Equipment data into a sheet (duplicated monthly template).
+ *
+ * Equipment template structure:
+ * - Row 2: 'MONTHLY INVENTORY EQUIPMENT' (title)
+ * - Row 3: 'Date : ...' (date)
+ * - Row 4: Headers — B4=No | C4=Items | D4=Previous Balance | E4=New Purchase |
+ *           F4=Condition (Good) | G4=Condition (Broken) | H4=Closing inventory |
+ *           I4=Need to purchase | J4=Price/Unit | K4=Total price
+ * - Row 5: Sub-headers (C5='Machine', F5='Good', G5='Broken')
+ * - Row 7+: Data rows (1 row per item)
+ *
+ * We write data starting from row 7. The 'Total price' column (K) is written
+ * as a formula =SUM(I*J) so it auto-recalculates in the sheet.
+ */
+export async function syncEquipmentToSheet(params: {
+  spreadsheetId: string;
+  targetSheetName?: string;
+  equipment: Array<{
+    no: number;
+    item_name: string;
+    previous_balance: number;
+    new_purchase: number;
+    condition_good: number;
+    condition_broken: number;
+    closing_inventory: number;
+    need_to_purchase: number;
+    price_per_unit: number;
+  }>;
+  date?: string; // YYYY-MM-DD for the 'Date :' cell
+}): Promise<SyncResult> {
+  const env = getGoogleEnv();
+  if (!env) {
+    return { success: false, error: 'Google Service Account credentials are not configured.' };
+  }
+
+  const { spreadsheetId, targetSheetName, equipment, date } = params;
+
+  try {
+    const auth = getAuthClient(env);
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    // Determine target sheet
+    let sheetName: string;
+    if (targetSheetName) {
+      const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
+      const found = (metaRes.data.sheets ?? []).find((s) => s.properties?.title === targetSheetName);
+      if (!found) {
+        return { success: false, error: `Sheet "${targetSheetName}" not found.` };
+      }
+      sheetName = targetSheetName;
+    } else {
+      const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
+      const found = (metaRes.data.sheets ?? []).find((s) => {
+        const title = (s.properties?.title ?? '').toLowerCase();
+        return title.includes('equipment');
+      });
+      sheetName = found?.properties?.title ?? 'Sheet1';
+    }
+    const safeSheetName = /^[\w]+$/.test(sheetName) ? sheetName : `'${sheetName}'`;
+
+    const dateStr = date || new Date().toISOString().split('T')[0];
+    const dataUpdates: { range: string; values: (string | number)[][] }[] = [
+      {
+        range: `${safeSheetName}!B3`,
+        values: [[`Date : ${new Date(dateStr).toLocaleDateString('en-US')}`]],
+      },
+    ];
+
+    // Write equipment data starting from row 7
+    equipment.forEach((item, idx) => {
+      const row = 7 + idx;
+      const totalFormula = `=SUM(I${row}*J${row})`;
+      dataUpdates.push({
+        range: `${safeSheetName}!B${row}:K${row}`,
+        values: [[
+          item.no,
+          item.item_name,
+          item.previous_balance,
+          item.new_purchase,
+          item.condition_good,
+          item.condition_broken,
+          item.closing_inventory,
+          item.need_to_purchase,
+          item.price_per_unit,
+          totalFormula,
+        ]],
+      });
+    });
+
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        valueInputOption: 'USER_ENTERED', // so formulas are interpreted
+        data: dataUpdates,
+      },
+    });
+
+    return {
+      success: true,
+      newSpreadsheetId: spreadsheetId,
+      newSpreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+    };
+  } catch (err: any) {
+    console.error('syncEquipmentToSheet error:', err);
+    return {
+      success: false,
+      error: err?.message ?? 'Unknown Google API error',
+    };
+  }
+}
+
 
