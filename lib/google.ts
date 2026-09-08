@@ -24,10 +24,30 @@ export function getGoogleEnv(): GoogleEnv | null {
     return null;
   }
 
-  // Private keys pasted into Vercel often lose the literal \n — restore them.
-  const privateKey = privateKeyRaw.replace(/\\n/g, '\n');
+  // Robust private key normalization:
+  // 1. Strip surrounding quotes if present (common paste mistake)
+  // 2. Convert literal \n (backslash + n) to actual newlines
+  // 3. Trim leading/trailing whitespace
+  let privateKey = privateKeyRaw.trim();
 
-  return { clientEmail, privateKey, templateSpreadsheetId };
+  // Remove surrounding double or single quotes (paste mistake)
+  if (
+    (privateKey.startsWith('"') && privateKey.endsWith('"')) ||
+    (privateKey.startsWith("'") && privateKey.endsWith("'"))
+  ) {
+    privateKey = privateKey.slice(1, -1).trim();
+  }
+
+  // Convert literal \n to actual newlines (Vercel stores \n as text, not newline)
+  privateKey = privateKey.replace(/\\n/g, '\n');
+
+  // Final safety: ensure the key starts with the PEM header
+  if (!privateKey.startsWith('-----BEGIN')) {
+    console.error('Google private key does not start with PEM header. First 50 chars:', privateKey.substring(0, 50));
+    return null;
+  }
+
+  return { clientEmail: clientEmail.trim(), privateKey, templateSpreadsheetId: templateSpreadsheetId.trim() };
 }
 
 export function isGoogleConfigured(): boolean {

@@ -32,11 +32,33 @@ function getServiceSupabase() {
 export async function POST(req: NextRequest) {
   // 1. Validate Google env
   if (!isGoogleConfigured()) {
+    // Get more specific error info
+    const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    const key = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    const sheetId = process.env.GOOGLE_TEMPLATE_SPREADSHEET_ID;
+
+    let missingHint = '';
+    if (!email) missingHint += ' GOOGLE_SERVICE_ACCOUNT_EMAIL is missing.';
+    if (!key) missingHint += ' GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY is missing.';
+    if (!sheetId) missingHint += ' GOOGLE_TEMPLATE_SPREADSHEET_ID is missing.';
+
+    // If key is present but doesn't start with PEM header (after normalization)
+    if (key && email && sheetId) {
+      let normalized = key.trim();
+      if ((normalized.startsWith('"') && normalized.endsWith('"')) ||
+          (normalized.startsWith("'") && normalized.endsWith("'"))) {
+        normalized = normalized.slice(1, -1).trim();
+      }
+      normalized = normalized.replace(/\\n/g, '\n');
+      if (!normalized.startsWith('-----BEGIN')) {
+        missingHint += ` Private key does not start with "-----BEGIN" after normalization. First 30 chars: "${normalized.substring(0, 30)}". Make sure you copied the ENTIRE private_key value from the JSON file, including the -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY----- markers.`;
+      }
+    }
+
     return NextResponse.json(
       {
         success: false,
-        error:
-          'Google Service Account not configured. Add GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY, and GOOGLE_TEMPLATE_SPREADSHEET_ID in Vercel env vars.',
+        error: `Google Service Account not configured properly.${missingHint}`,
       },
       { status: 500 }
     );
