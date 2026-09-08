@@ -4,6 +4,7 @@ import {
   duplicateTemplateForProject,
   isGoogleConfigured,
   syncDataToTemplate,
+  syncGeneralCleaningToTemplate,
 } from '@/lib/google';
 
 // ============================================================================
@@ -72,6 +73,8 @@ export async function POST(req: NextRequest) {
     year?: number;
     mode?: 'duplicate' | 'write'; // default: 'write' (avoids Drive quota issues)
     targetSpreadsheetId?: string; // for 'write' mode — defaults to template ID
+    type?: 'sc' | 'gc'; // 'sc' = Special Cleaning (default), 'gc' = General Cleaning
+    date?: string; // for 'gc' mode — YYYY-MM-DD, defaults to today
   };
   try {
     body = await req.json();
@@ -85,6 +88,8 @@ export async function POST(req: NextRequest) {
     year,
     mode = 'write', // default: write directly to template (no duplication)
     targetSpreadsheetId,
+    type = 'sc', // default: special cleaning
+    date,
   } = body;
   if (!projectId || !projectName || !month || !year) {
     return NextResponse.json(
@@ -126,7 +131,85 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 5. Fetch all rooms + special_cleaning records for the selected project + inspection_areas
+  // 5. Branch based on type: 'sc' (Special Cleaning) or 'gc' (General Cleaning)
+  if (type === 'gc') {
+    // === GENERAL CLEANING SYNC ===
+    const targetDate = date || new Date().toISOString().split('T')[0];
+
+    const [roomsRes, gcRes] = await Promise.all([
+      supabase
+        .from('rooms')
+        .select('id, room_number')
+        .order('room_number', { ascending: true }),
+      supabase
+        .from('general_cleaning')
+        .select('id, room_id, done_hk, done_eng, completed_at, date, profiles(name)')
+        .eq('date', targetDate),
+    ]);
+
+    if (roomsRes.error || gcRes.error) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Failed to fetch GC data from Supabase.',
+          details: {
+            rooms: roomsRes.error?.message,
+            gc: gcRes.error?.message,
+          },
+          spreadsheetId: targetSheetId,
+          spreadsheetUrl: targetSheetUrl,
+        },
+        { status: 500 }
+      );
+    }
+
+    const rooms = (roomsRes.data ?? []) as { id: string; room_number: string }[];
+    const gcRecords = (gcRes.data ?? []) as unknown as {
+      room_id: string;
+      done_hk: boolean;
+      done_eng: boolean;
+      completed_at: string | null;
+      profiles: { name: string } | null;
+    }[];
+
+    const syncResult = await syncGeneralCleaningToTemplate({
+      spreadsheetId: targetSheetId,
+      date: targetDate,
+      rooms,
+      gcRecords,
+    });
+
+    if (!syncResult.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: syncResult.error,
+          spreadsheetId: targetSheetId,
+          spreadsheetUrl: targetSheetUrl,
+          warning: 'Spreadsheet accessible but GC data could not be written. Check error message.',
+        },
+        { status: 500 }
+      );
+    }
+
+    const totalRooms = rooms.length;
+    const doneHK = gcRecords.filter((g) => g.done_hk).length;
+    const doneENG = gcRecords.filter((g) => g.done_eng).length;
+
+    return NextResponse.json({
+      success: true,
+      spreadsheetId: targetSheetId,
+      spreadsheetUrl: targetSheetUrl,
+      roomsWritten: totalRooms,
+      doneHK,
+      doneENG,
+      type: 'gc',
+      date: targetDate,
+      mode,
+    });
+  }
+
+  // === SPECIAL CLEANING SYNC (default) ===
   const [roomsRes, scRes, areasRes] = await Promise.all([
     supabase
       .from('rooms')

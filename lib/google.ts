@@ -362,6 +362,242 @@ function columnToLetter(col: number): string {
 }
 
 /**
+ * Syncs General Cleaning data (HK / ENG done status per room per day) into
+ * the second sheet of the template spreadsheet.
+ *
+ * Strategy:
+ * 1. Get all sheets in the spreadsheet — find the "General Cleaning" sheet
+ *    (or fall back to the second sheet, or first sheet if only one exists)
+ * 2. Read existing values to find:
+ *    - Header row containing "Room Number"
+ *    - Columns matching "HK", "Housekeeping", "ENG", "Engineering", "Done by HK", "Done by ENG"
+ *    - Rows matching each room number (in column B)
+ * 3. For each room in DB with a general_cleaning record for the selected date:
+ *    - Write Done by HK name + Date to the HK column
+ *    - Write Done by ENG name + Date to the ENG column
+ */
+export async function syncGeneralCleaningToTemplate(params: {
+  spreadsheetId: string;
+  date: string; // YYYY-MM-DD
+  rooms: { id: string; room_number: string }[];
+  gcRecords: {
+    room_id: string;
+    done_hk: boolean;
+    done_eng: boolean;
+    completed_at: string | null;
+    profiles: { name: string } | null;
+  }[];
+}): Promise<SyncResult> {
+  const env = getGoogleEnv();
+  if (!env) {
+    return { success: false, error: 'Google Service Account credentials are not configured.' };
+  }
+
+  const { spreadsheetId, date, rooms, gcRecords } = params;
+
+  try {
+    const auth = getAuthClient(env);
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    // 1. Get all sheets — find General Cleaning sheet (or fall back to sheet 2, or sheet 1)
+    const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
+    const allSheets = metaRes.data.sheets ?? [];
+    if (allSheets.length === 0) {
+      return { success: false, error: 'Spreadsheet has no sheets.' };
+    }
+
+    let targetSheet = allSheets.find((s) => {
+      const title = (s.properties?.title ?? '').toLowerCase();
+      return title.includes('general') && title.includes('cleaning');
+    });
+    if (!targetSheet) targetSheet = allSheets[1] ?? allSheets[0]; // fall back to 2nd sheet, or 1st
+    const sheetName = targetSheet?.properties?.title ?? 'Sheet1';
+    const safeSheetName = /^[\w]+$/.test(sheetName) ? sheetName : `'${sheetName}'`;
+
+    // 2. Read existing values
+    const readRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${safeSheetName}!A1:O300`,
+    });
+    const existingValues: (string | null)[][] = readRes.data.values ?? [];
+
+    // 3. Find header row (contains "Room Number")
+    let headerRowIdx = -1;
+    for (let i = 0; i < existingValues.length; i++) {
+      const row = existingValues[i] ?? [];
+      for (let col = 0; col < row.length; col++) {
+        if (String(row[col] ?? '').trim().toLowerCase() === 'room number') {
+          headerRowIdx = i;
+          break;
+        }
+      }
+      if (headerRowIdx >= 0) break;
+    }
+    if (headerRowIdx === -1) {
+      return {
+        success: false,
+        error: `Could not find "Room Number" header row in sheet "${sheetName}". Make sure this sheet has a row with "Room Number" as a column header.`,
+      };
+    }
+
+    // 4. Find HK column & ENG column (match common header variants)
+    const headerRow = existingValues[headerRowIdx] ?? [];
+    let hkColOffset = -1;
+    let engColOffset = -1;
+    let hkDateColOffset = -1;
+    let engDateColOffset = -1;
+
+    for (let col = 0; col < headerRow.length; col++) {
+      const cellVal = String(headerRow[col] ?? '').trim().toLowerCase();
+      // HK columns
+      if (
+        (cellVal === 'hk' ||
+          cellVal === 'housekeeping' ||
+          cellVal === 'done by hk' ||
+          cellVal === 'done by housekeeping' ||
+          cellVal === 'hk done') &&
+        hkColOffset === -1
+      ) {
+        hkColOffset = col;
+      }
+      // ENG columns
+      else if (
+        (cellVal === 'eng' ||
+          cellVal === 'engineering' ||
+          cellVal === 'done by eng' ||
+          cellVal === 'done by engineering' ||
+          cellVal === 'eng done') &&
+        engColOffset === -1
+      ) {
+        engColOffset = col;
+      }
+    }
+
+    // Also try to find date columns next to HK / ENG
+    if (hkColOffset >= 0) {
+      const next = String(headerRow[hkColOffset + 1] ?? '').trim().toLowerCase();
+      if (next === 'date' || next === 'time' || next === 'completed at' || next === 'completed') {
+        hkDateColOffset = hkColOffset + 1;
+      }
+    }
+    if (engColOffset >= 0) {
+      const next = String(headerRow[engColOffset + 1] ?? '').trim().toLowerCase();
+      if (next === 'date' || next === 'time' || next === 'completed at' || next === 'completed') {
+        engDateColOffset = engColOffset + 1;
+      }
+    }
+
+    if (hkColOffset === -1 && engColOffset === -1) {
+      return {
+        success: false,
+        error: `Could not find HK or ENG columns in sheet "${sheetName}" header row. Header content: ${JSON.stringify(headerRow)}. Expected one of: HK, Housekeeping, Done by HK, ENG, Engineering, Done by ENG.`,
+      };
+    }
+
+    // 5. Build room_number → row_idx map
+    const roomNumberToRow: Record<string, number> = {};
+    for (let i = headerRowIdx + 1; i < existingValues.length; i++) {
+      const cellVal = String(existingValues[i]?.[1] ?? '').trim();
+      if (/^\d+$/.test(cellVal)) {
+        roomNumberToRow[cellVal] = i;
+      }
+    }
+
+    // 6. Build gc lookup: room_id → record
+    const gcByRoom = new Map<string, (typeof gcRecords)[0]>();
+    gcRecords.forEach((g) => gcByRoom.set(g.room_id, g));
+
+    // 7. Build batch update data
+    const dataUpdates: { range: string; values: (string | number)[][] }[] = [];
+    let roomsWithHK = 0;
+    let roomsWithENG = 0;
+    let roomsWritten = 0;
+
+    rooms.forEach((room) => {
+      const rowIdx = roomNumberToRow[room.room_number];
+      if (rowIdx === undefined) return;
+
+      const gc = gcByRoom.get(room.id);
+      const rowNumber = rowIdx + 1; // 1-indexed for API
+
+      roomsWritten++;
+
+      if (hkColOffset >= 0) {
+        const hkCol = columnToLetter(hkColOffset);
+        const hkValue = gc?.done_hk ? (gc.profiles?.name ?? 'Done') : '';
+        dataUpdates.push({
+          range: `${safeSheetName}!${hkCol}${rowNumber}`,
+          values: [[hkValue]],
+        });
+        if (gc?.done_hk) roomsWithHK++;
+
+        if (hkDateColOffset >= 0) {
+          const dateCol = columnToLetter(hkDateColOffset);
+          const dateValue =
+            gc?.done_hk && gc.completed_at
+              ? new Date(gc.completed_at).toLocaleDateString('en-US')
+              : '';
+          dataUpdates.push({
+            range: `${safeSheetName}!${dateCol}${rowNumber}`,
+            values: [[dateValue]],
+          });
+        }
+      }
+
+      if (engColOffset >= 0) {
+        const engCol = columnToLetter(engColOffset);
+        const engValue = gc?.done_eng ? (gc.profiles?.name ?? 'Done') : '';
+        dataUpdates.push({
+          range: `${safeSheetName}!${engCol}${rowNumber}`,
+          values: [[engValue]],
+        });
+        if (gc?.done_eng) roomsWithENG++;
+
+        if (engDateColOffset >= 0) {
+          const dateCol = columnToLetter(engDateColOffset);
+          const dateValue =
+            gc?.done_eng && gc.completed_at
+              ? new Date(gc.completed_at).toLocaleDateString('en-US')
+              : '';
+          dataUpdates.push({
+            range: `${safeSheetName}!${dateCol}${rowNumber}`,
+            values: [[dateValue]],
+          });
+        }
+      }
+    });
+
+    if (dataUpdates.length === 0) {
+      return {
+        success: false,
+        error: 'No data to write. Make sure the General Cleaning sheet has room numbers in column B that match rooms in the database.',
+      };
+    }
+
+    // 8. Batch update
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        valueInputOption: 'RAW',
+        data: dataUpdates,
+      },
+    });
+
+    return {
+      success: true,
+      newSpreadsheetId: spreadsheetId,
+      newSpreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=${targetSheet?.properties?.sheetId ?? 0}`,
+    };
+  } catch (err: any) {
+    console.error('syncGeneralCleaningToTemplate error:', err);
+    return {
+      success: false,
+      error: err?.message ?? 'Unknown Google API error',
+    };
+  }
+}
+
+/**
  * Lists all spreadsheets owned by the service account.
  * Useful for cleanup (when Drive quota is exceeded).
  */

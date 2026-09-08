@@ -34,7 +34,11 @@ interface SyncResult {
   roomsWritten?: number;
   cellsWritten?: number;
   doneCells?: number;
+  doneHK?: number;
+  doneENG?: number;
   inspectionAreas?: number;
+  type?: 'sc' | 'gc';
+  date?: string;
   error?: string;
   warning?: string;
 }
@@ -102,8 +106,9 @@ export default function GoogleSyncPage() {
     setProjects(data ?? []);
   }
 
-  async function handleSync(project: SpecialProject) {
-    setSyncing(project.id);
+  async function handleSync(project: SpecialProject, type: 'sc' | 'gc' = 'sc') {
+    const syncKey = `${project.id}|${type}`;
+    setSyncing(syncKey);
     try {
       const res = await fetch('/api/google/sync', {
         method: 'POST',
@@ -114,27 +119,36 @@ export default function GoogleSyncPage() {
           month: project.month,
           year: project.year,
           mode: 'write', // write directly to template — avoids Drive quota issues
+          type,
+          date: new Date().toISOString().split('T')[0], // for GC sync
         }),
       });
       const data: SyncResult = await res.json();
-      setLastResults((prev) => ({ ...prev, [project.id]: data }));
+      setLastResults((prev) => ({ ...prev, [syncKey]: data }));
 
       if (data.success) {
-        toast({
-          title: 'Spreadsheet synced',
-          description: `${data.roomsWritten} rooms × ${data.inspectionAreas} areas = ${data.cellsWritten} cells written (${data.doneCells} done).`,
-        });
+        if (type === 'gc') {
+          toast({
+            title: 'GC synced',
+            description: `${data.roomsWritten} rooms written — HK: ${data.doneHK} done, ENG: ${data.doneENG} done`,
+          });
+        } else {
+          toast({
+            title: 'SC synced',
+            description: `${data.roomsWritten} rooms × ${data.inspectionAreas} areas = ${data.cellsWritten} cells written (${data.doneCells} done).`,
+          });
+        }
       } else {
         toast({
-          title: 'Sync failed',
+          title: `${type.toUpperCase()} sync failed`,
           description: data.error ?? data.warning,
           variant: 'destructive',
         });
       }
     } catch (e: any) {
       const result: SyncResult = { success: false, error: e.message };
-      setLastResults((prev) => ({ ...prev, [project.id]: result }));
-      toast({ title: 'Sync failed', description: e.message, variant: 'destructive' });
+      setLastResults((prev) => ({ ...prev, [syncKey]: result }));
+      toast({ title: `${type.toUpperCase()} sync failed`, description: e.message, variant: 'destructive' });
     }
     setSyncing(null);
   }
@@ -278,67 +292,124 @@ export default function GoogleSyncPage() {
           ) : (
             <div className="space-y-2">
               {projects.map((project, i) => {
-                const result = lastResults[project.id];
-                const isSyncing = syncing === project.id;
+                const scKey = `${project.id}|sc`;
+                const gcKey = `${project.id}|gc`;
+                const scResult = lastResults[scKey];
+                const gcResult = lastResults[gcKey];
+                const isScSyncing = syncing === scKey;
+                const isGcSyncing = syncing === gcKey;
                 return (
                   <motion.div
                     key={project.id}
                     initial={{ opacity: 0, y: 5 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.2, delay: i * 0.03 }}
-                    className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between"
+                    className="rounded-lg border p-4 space-y-3"
                   >
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium">{project.project_name}</p>
-                        <Badge variant="outline" className="text-xs">
-                          {MONTH_NAMES[project.month - 1]} {project.year}
-                        </Badge>
-                      </div>
-                      {result?.success ? (
-                        <p className="mt-1 flex items-center gap-1 text-xs text-emerald-700">
-                          <CheckCircle2 className="h-3 w-3" />
-                          Synced · {result.cellsWritten ?? 0} cells written ({result.doneCells ?? 0} done)
-                          {result.spreadsheetUrl && (
-                            <a
-                              href={result.spreadsheetUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="ml-2 inline-flex items-center gap-0.5 font-medium underline"
-                            >
-                              Open <ExternalLink className="h-3 w-3" />
-                            </a>
-                          )}
-                        </p>
-                      ) : result ? (
-                        <p className="mt-1 flex items-start gap-1 text-xs text-red-700">
-                          <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0" />
-                          <span>{result.error ?? result.warning}</span>
-                        </p>
-                      ) : (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Not synced yet
-                        </p>
-                      )}
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium">{project.project_name}</p>
+                      <Badge variant="outline" className="text-xs">
+                        {MONTH_NAMES[project.month - 1]} {project.year}
+                      </Badge>
                     </div>
-                    <Button
-                      size="sm"
-                      onClick={() => handleSync(project)}
-                      disabled={isSyncing || !status?.configured}
-                      className="gold-gradient text-navy hover:opacity-90"
-                    >
-                      {isSyncing ? (
-                        <>
-                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                          Syncing...
-                        </>
-                      ) : (
-                        <>
-                          <Sheet className="mr-2 h-4 w-4" />
-                          Sync to Sheet
-                        </>
-                      )}
-                    </Button>
+
+                    {/* Special Cleaning row */}
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-t pt-3">
+                      <div className="flex-1">
+                        <p className="text-xs font-medium text-muted-foreground">Special Cleaning (4 areas × rooms)</p>
+                        {scResult?.success ? (
+                          <p className="mt-1 flex items-center gap-1 text-xs text-emerald-700">
+                            <CheckCircle2 className="h-3 w-3" />
+                            Synced · {scResult.cellsWritten ?? 0} cells written ({scResult.doneCells ?? 0} done)
+                            {scResult.spreadsheetUrl && (
+                              <a
+                                href={scResult.spreadsheetUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="ml-2 inline-flex items-center gap-0.5 font-medium underline"
+                              >
+                                Open <ExternalLink className="h-3 w-3" />
+                              </a>
+                            )}
+                          </p>
+                        ) : scResult ? (
+                          <p className="mt-1 flex items-start gap-1 text-xs text-red-700">
+                            <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0" />
+                            <span>{scResult.error ?? scResult.warning}</span>
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-xs text-muted-foreground">Not synced yet</p>
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => handleSync(project, 'sc')}
+                        disabled={isScSyncing || !status?.configured}
+                        className="gold-gradient text-navy hover:opacity-90"
+                      >
+                        {isScSyncing ? (
+                          <>
+                            <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                            Syncing...
+                          </>
+                        ) : (
+                          <>
+                            <Sheet className="mr-2 h-4 w-4" />
+                            Sync SC
+                          </>
+                        )}
+                      </Button>
+                    </div>
+
+                    {/* General Cleaning row */}
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-t pt-3">
+                      <div className="flex-1">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          General Cleaning (HK / ENG per room today)
+                        </p>
+                        {gcResult?.success ? (
+                          <p className="mt-1 flex items-center gap-1 text-xs text-emerald-700">
+                            <CheckCircle2 className="h-3 w-3" />
+                            Synced · {gcResult.roomsWritten ?? 0} rooms — HK: {gcResult.doneHK ?? 0} done, ENG: {gcResult.doneENG ?? 0} done
+                            {gcResult.spreadsheetUrl && (
+                              <a
+                                href={gcResult.spreadsheetUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="ml-2 inline-flex items-center gap-0.5 font-medium underline"
+                              >
+                                Open <ExternalLink className="h-3 w-3" />
+                              </a>
+                            )}
+                          </p>
+                        ) : gcResult ? (
+                          <p className="mt-1 flex items-start gap-1 text-xs text-red-700">
+                            <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0" />
+                            <span>{gcResult.error ?? gcResult.warning}</span>
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-xs text-muted-foreground">Not synced yet</p>
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => handleSync(project, 'gc')}
+                        disabled={isGcSyncing || !status?.configured}
+                        variant="outline"
+                      >
+                        {isGcSyncing ? (
+                          <>
+                            <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                            Syncing...
+                          </>
+                        ) : (
+                          <>
+                            <Sheet className="mr-2 h-4 w-4" />
+                            Sync GC
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </motion.div>
                 );
               })}
