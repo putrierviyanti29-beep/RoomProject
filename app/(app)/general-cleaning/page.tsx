@@ -44,6 +44,7 @@ export default function GeneralCleaningPage() {
   const [search, setSearch] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [updating, setUpdating] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const isAdmin = profile?.role === 'admin';
@@ -53,16 +54,33 @@ export default function GeneralCleaningPage() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const [roomsRes, gcRes] = await Promise.all([
-      supabase
-        .from('rooms')
-        .select('id, room_number, room_type_id, section, floor, created_at, room_types(id, name)')
-        .order('room_number', { ascending: true }),
-      supabase
-        .from('general_cleaning')
-        .select('id, room_id, status, done_type, completed_by, completed_at, date, notes, profiles(name, email)')
-        .eq('date', selectedDate),
-    ]);
+    setFetchError(null);
+    // Fetch rooms & GC separately so rooms still load even if GC query fails
+    const roomsRes = await supabase
+      .from('rooms')
+      .select('id, room_number, room_type_id, section, floor, created_at, room_types(id, name)')
+      .order('room_number', { ascending: true });
+
+    const gcRes = await supabase
+      .from('general_cleaning')
+      .select('id, room_id, status, done_type, completed_by, completed_at, date, notes, profiles(name, email)')
+      .eq('date', selectedDate);
+
+    // Surface GC errors with a clear banner so the user knows migration is missing
+    if (gcRes.error) {
+      console.error('GC fetch error:', gcRes.error);
+      const msg = gcRes.error.message || '';
+      const hint =
+        msg.includes('done_type') || msg.includes('column')
+          ? 'Database migration belum di-run. Jalankan file supabase/migrations/20260908060000_refactor_cleaning_split.sql di Supabase SQL Editor.'
+          : `Supabase error: ${msg}`;
+      setFetchError(hint);
+      toast({
+        title: 'Gagal memuat data cleaning',
+        description: hint,
+        variant: 'destructive',
+      });
+    }
 
     const gcByRoom = new Map<string, GeneralCleaning>();
     (gcRes.data ?? []).forEach((g) => {
@@ -268,6 +286,37 @@ export default function GeneralCleaningPage() {
           </Button>
         }
       />
+
+      {/* DB error banner — shown when GC query fails (e.g. migration not run) */}
+      {fetchError && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm">
+          <AlertTriangle className="h-5 w-5 flex-shrink-0 text-amber-600 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium text-amber-900">Database belum siap untuk fitur baru</p>
+            <p className="mt-1 text-amber-800">{fetchError}</p>
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs font-medium text-amber-700 underline">
+                Lihat cara run migration
+              </summary>
+              <ol className="mt-2 list-inside list-decimal space-y-1 text-xs text-amber-800">
+                <li>Buka Supabase dashboard → <strong>SQL Editor</strong> (sidebar kiri)</li>
+                <li>Klik <strong>New query</strong></li>
+                <li>
+                  Copy isi file <code className="rounded bg-amber-100 px-1">supabase/migrations/20260908060000_refactor_cleaning_split.sql</code>{' '}
+                  dari repo GitHub kamu
+                </li>
+                <li>Paste ke SQL Editor → klik <strong>Run</strong> (tombol hijau di bawah)</li>
+                <li>Tunggu sampai ada tulisan <em>&quot;Success. No rows returned&quot;</em></li>
+                <li>Klik tombol <strong>Refresh</strong> di kanan atas halaman ini</li>
+              </ol>
+            </details>
+          </div>
+          <Button size="sm" variant="outline" onClick={fetchData} disabled={loading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Retry
+          </Button>
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
