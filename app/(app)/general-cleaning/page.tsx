@@ -71,21 +71,21 @@ export default function GeneralCleaningPage() {
       console.error('GC fetch error:', gcRes.error);
       const msg = gcRes.error.message || '';
       const code = (gcRes.error as any)?.code || '';
-      let hint: string;
-      if (msg.includes('done_type') || msg.includes('column')) {
-        hint = `Migration belum di-run atau belum selesai. Jalankan 3 file SQL ini di Supabase SQL Editor secara berurutan:
-1. supabase/migrations/20260908060000_refactor_cleaning_split.sql
-2. supabase/migrations/20260908060001_refactor_cleaning_split_idempotent.sql (safe re-run)
-3. supabase/migrations/20260908060002_fix_profiles_fk_and_cache.sql`;
-      } else if (msg.includes('profiles') && msg.includes('relationship')) {
-        hint = `FK relationship ke profiles belum terdaftar. Jalankan file: 20260908060002_fix_profiles_fk_and_cache.sql di Supabase SQL Editor.`;
-      } else {
-        hint = `Supabase error [${code}]: ${msg}`;
-      }
+      const hint = `[${code}] ${msg}
+
+Supabase URL: ${process.env.NEXT_PUBLIC_SUPABASE_URL ?? '(not set)'}
+
+Possible causes:
+1. Migration belum di-run di Supabase project yang BENAR (cek URL di atas vs URL di Supabase dashboard)
+2. PostgREST schema cache belum reload (tunggu 1 menit setelah run SQL, lalu hard refresh)
+3. Kamu mengakses preview URL lama (bukan production URL) — cek Vercel dashboard untuk production URL
+
+Run SQL ini di Supabase SQL Editor project yang BENAR:
+https://raw.githubusercontent.com/putrierviyanti29-beep/RoomProject/main/supabase/migrations/20260908060003_all_in_one_fix.sql`;
       setFetchError(hint);
       toast({
         title: 'Gagal memuat data cleaning',
-        description: hint,
+        description: `[${code}] ${msg}`,
         variant: 'destructive',
       });
     }
@@ -299,27 +299,35 @@ export default function GeneralCleaningPage() {
       {fetchError && (
         <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm">
           <AlertTriangle className="h-5 w-5 flex-shrink-0 text-amber-600 mt-0.5" />
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             <p className="font-medium text-amber-900">Database belum siap untuk fitur baru</p>
-            <p className="mt-1 text-amber-800">{fetchError}</p>
+            <pre className="mt-2 whitespace-pre-wrap break-words rounded bg-amber-100/60 p-2 text-xs text-amber-900 font-mono overflow-auto max-h-60">
+{fetchError}
+            </pre>
             <details className="mt-2">
               <summary className="cursor-pointer text-xs font-medium text-amber-700 underline">
-                Lihat cara run migration
+                Lihat cara fix
               </summary>
               <ol className="mt-2 list-inside list-decimal space-y-1 text-xs text-amber-800">
-                <li>Buka Supabase dashboard → <strong>SQL Editor</strong> (sidebar kiri)</li>
-                <li>Klik <strong>New query</strong></li>
                 <li>
-                  Copy isi file <code className="rounded bg-amber-100 px-1">supabase/migrations/20260908060000_refactor_cleaning_split.sql</code>{' '}
-                  dari repo GitHub kamu
+                  Buka Supabase dashboard → pastikan URL di sidebar (mis. <code className="rounded bg-amber-100 px-1">vysxzxnhdbufeflfuoqz</code>) SAMA dengan URL di banner error di atas
                 </li>
-                <li>Paste ke SQL Editor → klik <strong>Run</strong> (tombol hijau di bawah)</li>
-                <li>Tunggu sampai ada tulisan <em>&quot;Success. No rows returned&quot;</em></li>
-                <li>Klik tombol <strong>Refresh</strong> di kanan atas halaman ini</li>
+                <li>
+                  Buka link SQL ini di tab baru → copy semua isinya:
+                  <br />
+                  <code className="mt-1 block rounded bg-amber-100 px-2 py-1 text-[10px] break-all">
+                    https://raw.githubusercontent.com/putrierviyanti29-beep/RoomProject/main/supabase/migrations/20260908060003_all_in_one_fix.sql
+                  </code>
+                </li>
+                <li>Supabase → <strong>SQL Editor</strong> → <strong>New query</strong> → paste → klik <strong>Run</strong></li>
+                <li>Tunggu sampai <em>&quot;Success. No rows returned&quot;</em></li>
+                <li>Tunggu 30 detik (PostgREST cache reload)</li>
+                <li>Buka URL <strong>PRODUCTION</strong> Vercel (bukan preview URL) — cek di Vercel dashboard</li>
+                <li>Hard refresh: <strong>Ctrl+Shift+R</strong> (Windows) atau <strong>Cmd+Shift+R</strong> (Mac)</li>
               </ol>
             </details>
           </div>
-          <Button size="sm" variant="outline" onClick={fetchData} disabled={loading}>
+          <Button size="sm" variant="outline" onClick={fetchData} disabled={loading} className="flex-shrink-0">
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Retry
           </Button>
