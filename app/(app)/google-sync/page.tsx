@@ -45,6 +45,8 @@ export default function GoogleSyncPage() {
   const [projects, setProjects] = useState<SpecialProject[]>([]);
   const [syncing, setSyncing] = useState<string | null>(null);
   const [lastResults, setLastResults] = useState<Record<string, SyncResult>>({});
+  const [diagLoading, setDiagLoading] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<any | null>(null);
 
   // Role guard: admin only
   useEffect(() => {
@@ -70,6 +72,23 @@ export default function GoogleSyncPage() {
       setStatus({ configured: false, message: e.message });
     }
     setStatusLoading(false);
+  }
+
+  async function runDiagnostics() {
+    setDiagLoading(true);
+    setDiagnostics(null);
+    try {
+      const res = await fetch('/api/google/debug');
+      const data = await res.json();
+      setDiagnostics(data);
+      toast({
+        title: 'Diagnostics complete',
+        description: 'Scroll down to see the full report.',
+      });
+    } catch (e: any) {
+      setDiagnostics({ error: e.message });
+    }
+    setDiagLoading(false);
   }
 
   async function fetchProjects() {
@@ -131,10 +150,16 @@ export default function GoogleSyncPage() {
         title="Google Sheets Sync"
         description="Duplicate the master spreadsheet template for each project and export cleaning data automatically."
         action={
-          <Button variant="outline" size="sm" onClick={checkStatus} disabled={statusLoading}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${statusLoading ? 'animate-spin' : ''}`} />
-            Check Status
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={runDiagnostics} disabled={diagLoading}>
+              <AlertTriangle className={`mr-2 h-4 w-4 ${diagLoading ? 'animate-spin' : ''}`} />
+              {diagLoading ? 'Running...' : 'Run Diagnostics'}
+            </Button>
+            <Button variant="outline" size="sm" onClick={checkStatus} disabled={statusLoading}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${statusLoading ? 'animate-spin' : ''}`} />
+              Check Status
+            </Button>
+          </div>
         }
       />
 
@@ -207,6 +232,27 @@ export default function GoogleSyncPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Diagnostics panel */}
+      {diagnostics && (
+        <Card className="card-shadow-lg border-blue-200">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-blue-600" />
+              Diagnostics Report
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="overflow-auto rounded-lg bg-muted p-4 text-xs whitespace-pre-wrap break-words max-h-96">
+{JSON.stringify(diagnostics, null, 2)}
+            </pre>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Screenshot/paste hasil di atas ke chat supaya bisa dianalisa lebih lanjut.
+              Look for ✗ marks — they show what&apos;s failing.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Projects to sync */}
       <Card className="card-shadow-lg">
