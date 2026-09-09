@@ -1190,6 +1190,7 @@ export async function syncPillowProtectorToSheet(params: {
     status: string;
     done_at: string | null;
     done_by_name: string | null;
+    remarks: string | null;
   }>;
 }): Promise<SyncResult & { roomsWritten?: number }> {
   const env = getGoogleEnv();
@@ -1271,14 +1272,17 @@ export async function syncPillowProtectorToSheet(params: {
       const dateCol = columnToLetter(protectorCol);
       const statusCol = columnToLetter(protectorCol + 1);
       const doneByCol = columnToLetter(protectorCol + 2);
+      const remarksCol = columnToLetter(protectorCol + 3);
 
       const dateStr = rec.done_at ? new Date(rec.done_at).toLocaleDateString('en-US') : '';
       const statusStr = rec.status === 'done' ? 'Done' : 'Pending';
       const doneByStr = rec.status === 'done' ? (rec.done_by_name ?? '') : '';
+      const remarksStr = rec.remarks ?? '';
 
       dataUpdates.push({ range: `${safeSheetName}!${dateCol}${rowNumber}`, values: [[dateStr]] });
       dataUpdates.push({ range: `${safeSheetName}!${statusCol}${rowNumber}`, values: [[statusStr]] });
       dataUpdates.push({ range: `${safeSheetName}!${doneByCol}${rowNumber}`, values: [[doneByStr]] });
+      dataUpdates.push({ range: `${safeSheetName}!${remarksCol}${rowNumber}`, values: [[remarksStr]] });
       roomsWritten++;
     });
 
