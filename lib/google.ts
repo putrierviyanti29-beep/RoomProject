@@ -1031,20 +1031,28 @@ export async function syncInventoryMatrixToSheet(params: {
     for (let col = 0; col < headerRow.length; col++) {
       const cellVal = String(headerRow[col] ?? '').trim().toLowerCase();
       if (cellVal === 'items') {
-        // Found a block start — the ITEMS header is at `col`, but item NAMES
-        // are stored in the column right after it (col+1). The number column
-        // (1, 2, 3, ...) is at `col`, item name is at `col+1`.
-        const itemsNameCol = col + 1;
+        // Found ITEMS header. Item names could be in:
+        // - col+1 (Linen/Aset Room template: B='ITEMS', C='Bath Towel')
+        // - col itself (Aset Area template: B='ITEMS', B6='dusbin restroom')
+        // Auto-detect by checking row 6 (first data row) at both positions
+        let itemsNameCol = col + 1; // default: next column
+        const firstDataRow = existingValues[5] ?? []; // row 6 (0-indexed = 5)
+        const valAtCol = String(firstDataRow[col] ?? '').trim();
+        const valAtColPlus1 = String(firstDataRow[col + 1] ?? '').trim();
+        // If col has a text value (not a number) and col+1 has a number or empty,
+        // then item names are in col (Aset Area layout)
+        if (valAtCol && isNaN(Number(valAtCol)) && valAtCol.toLowerCase() !== 'items') {
+          itemsNameCol = col;
+        } else if (valAtColPlus1 && isNaN(Number(valAtColPlus1))) {
+          itemsNameCol = col + 1;
+        }
 
         // Scan subsequent columns (starting from itemsNameCol+1) for locations
-        // Use case-insensitive keys so 'Linen Room' (DB) matches 'LINEN ROOM' (sheet)
         const locationCols = new Map<string, number>();
         for (let c = itemsNameCol + 1; c < headerRow.length; c++) {
           const locVal = String(headerRow[c] ?? '').trim();
           if (!locVal) continue;
-          if (locVal.toLowerCase() === 'remarks') break; // end of block
-          // Room numbers in sheet are stored as numbers (e.g. 201.0)
-          // Convert to string without decimal: '201.0' → '201'
+          if (locVal.toLowerCase() === 'remarks' || locVal.toLowerCase() === 'total') break;
           const normalizedLoc = /^-?\d+(\.\d+)?$/.test(locVal)
             ? String(parseInt(locVal, 10))
             : locVal;
