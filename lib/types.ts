@@ -176,12 +176,10 @@ export const DEFAULT_LINEN_STORAGES = [
 
 // Room groups (Blocks 2-9 of the template)
 // Block 4 = Section C Floor 4: rooms 412-424 (13 rooms)
-// Block 5 = duplicate of Block 4 (also 412-424)
 export const LINEN_ROOM_GROUPS: { label: string; rooms: string[] }[] = [
   { label: 'Section C Floor 2', rooms: ['201', '202', '203', '204', '205', '206', '207', '208', '209', '210', '211', '212', '213'] },
   { label: 'Section C Floor 3', rooms: ['312', '313', '314', '315', '316', '317', '318', '319', '320', '321', '322', '323', '324'] },
   { label: 'Section C Floor 4', rooms: ['412', '413', '414', '415', '416', '417', '418', '419', '420', '421', '422', '423', '424'] },
-  { label: 'Section C Floor 4 (dup)', rooms: ['412', '413', '414', '415', '416', '417', '418', '419', '420', '421', '422', '423', '424'] },
   { label: 'Section C Floor 5', rooms: ['508', '509', '510', '511', '512', '513', '514', '515', '516', '517', '518', '519', '520'] },
   { label: 'Section A Floor 3', rooms: ['301', '302', '303', '304', '305', '306', '307', '308', '309', '310', '311'] },
   { label: 'Section A Floor 4', rooms: ['401', '402', '403', '404', '405', '406', '407', '408', '409', '410', '411'] },
