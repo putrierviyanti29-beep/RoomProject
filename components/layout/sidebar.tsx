@@ -18,6 +18,7 @@ import {
   Armchair,
   Wrench,
   Building2,
+  BarChart3,
 } from 'lucide-react';
 import type { UserRole } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -50,6 +51,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: 'Inventory Aset Room', href: '/inventory/aset-room', icon: Armchair, roles: ['admin', 'manager', 'supervisor'] },
       { label: 'Inventory Aset Area', href: '/inventory/aset-area', icon: Building2, roles: ['admin', 'manager', 'supervisor'] },
       { label: 'Inventory Equipment Room & Area', href: '/inventory/equipment', icon: Wrench, roles: ['admin', 'manager', 'supervisor'] },
+      { label: 'Inventory Report', href: '/inventory/report', icon: BarChart3, roles: ['admin', 'manager', 'supervisor'] },
     ],
   },
   {
