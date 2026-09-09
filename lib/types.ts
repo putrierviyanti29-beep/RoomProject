@@ -334,4 +334,5 @@ export interface InventoryPillowProtector {
   created_by: string | null;
   rooms?: Room | null;
   profiles?: { name: string } | null;
+  remarks?: string | null;
 }
