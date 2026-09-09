@@ -441,7 +441,7 @@ export async function POST(req: NextRequest) {
       .select(`
         id, status, done_at,
         rooms!inner(room_number, room_types(name)),
-        profiles(name)
+        profiles!done_by(name)
       `)
       .eq('period_month', new Date().getMonth() + 1)
       .eq('period_year', new Date().getFullYear());
