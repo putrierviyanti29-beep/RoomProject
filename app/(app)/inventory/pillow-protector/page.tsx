@@ -359,6 +359,7 @@ export default function PillowProtectorPage() {
                               <th className="px-4 py-2 font-medium">Status</th>
                               <th className="px-4 py-2 font-medium">Done By</th>
                               <th className="px-4 py-2 font-medium">Date</th>
+                              <th className="px-4 py-2 font-medium">Remarks</th>
                               <th className="px-4 py-2 text-right font-medium">Action</th>
                             </tr>
                           </thead>
@@ -385,6 +386,21 @@ export default function PillowProtectorPage() {
                                   <td className="px-4 py-2 text-muted-foreground">{pp?.profiles?.name ?? '—'}</td>
                                   <td className="px-4 py-2 text-muted-foreground">
                                     {pp?.done_at ? new Date(pp.done_at).toLocaleDateString('en-US') : '—'}
+                                  </td>
+                                  <td className="px-4 py-2">
+                                    <input
+                                      key={`${room.id}-${periodMonth}-${periodYear}`}
+                                      type="text"
+                                      defaultValue={pp?.remarks ?? ''}
+                                      onBlur={(e) => {
+                                        if (e.target.value !== (pp?.remarks ?? '')) {
+                                          saveRemarks(room, e.target.value);
+                                        }
+                                      }}
+                                      disabled={!canEdit || isUpdating}
+                                      placeholder="—"
+                                      className="w-full min-w-[120px] rounded-md border bg-background px-2 py-1 text-sm"
+                                    />
                                   </td>
                                   <td className="px-4 py-2 text-right">
                                     <Button
