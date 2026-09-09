@@ -407,11 +407,10 @@ export async function POST(req: NextRequest) {
 
     const asetAreaRecords = (asetAreaData ?? []) as Array<{ item_name: string; location: string; count: number | null }>;
 
-    // Aset Area writes to the same Aset Room sheet (Block 6 of Aset Room template)
-    // because there's no separate Aset Area template sheet
+    // Aset Area writes to its own monthly sheet (now has separate template)
     const syncResult = await syncInventoryAsetAreaToSheet({
       spreadsheetId: targetSheetId,
-      targetSheetName: monthlyDup.asetRoomSheetName ?? monthlyDup.asetAreaSheetName,
+      targetSheetName: monthlyDup.asetAreaSheetName,
       records: asetAreaRecords,
     });
 
@@ -426,7 +425,7 @@ export async function POST(req: NextRequest) {
       success: true,
       spreadsheetId: targetSheetId,
       spreadsheetUrl: targetSheetUrl,
-      sheetName: monthlyDup.asetRoomSheetName ?? monthlyDup.asetAreaSheetName,
+      sheetName: monthlyDup.asetAreaSheetName,
       cellsWritten: syncResult.cellsWritten ?? 0,
       type: 'aset-area',
       mode,
