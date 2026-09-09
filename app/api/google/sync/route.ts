@@ -439,7 +439,7 @@ export async function POST(req: NextRequest) {
     const { data: ppData, error: ppErr } = await supabase
       .from('inventory_pillow_protector')
       .select(`
-        id, status, done_at,
+        id, status, done_at, remaks,
         rooms!inner(room_number, room_types(name)),
         profiles!done_by(name)
       `)
