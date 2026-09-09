@@ -72,7 +72,7 @@ export default function PillowProtectorPage() {
         .order('room_number', { ascending: true }),
       supabase
         .from('inventory_pillow_protector')
-        .select('id, room_id, status, done_by, done_at, notes, period_month, period_year, created_at, updated_at, profiles(name)')
+        .select('id, room_id, status, done_by, done_at, notes, period_month, period_year, created_at, updated_at, profiles!done_by(name)')
         .eq('period_month', periodMonth)
         .eq('period_year', periodYear),
     ]);
