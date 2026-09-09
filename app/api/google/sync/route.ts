@@ -459,6 +459,7 @@ export async function POST(req: NextRequest) {
       status: r.status,
       done_at: r.done_at,
       done_by_name: r.profiles?.name ?? null,
+      remarks: r.remarks ?? null,
     }));
 
     const syncResult = await syncPillowProtectorToSheet({
