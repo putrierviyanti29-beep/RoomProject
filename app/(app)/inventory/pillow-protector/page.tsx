@@ -72,13 +72,19 @@ export default function PillowProtectorPage() {
         .order('room_number', { ascending: true }),
       supabase
         .from('inventory_pillow_protector')
-        .select('id, room_id, status, done_by, done_at, notes, remaks, period_month, period_year, created_at, updated_at, profiles!done_by(name)')
+        .select('id, room_id, status, done_by, done_at, notes, remarks, period_month, period_year, created_at, updated_at, profiles!done_by(name)')
         .eq('period_month', periodMonth)
         .eq('period_year', periodYear),
     ]);
 
     if (roomsRes.error) {
       toast({ title: 'Gagal memuat rooms', description: roomsRes.error.message, variant: 'destructive' });
+      setLoading(false);
+      return;
+    }
+
+    if (ppRes.error) {
+      toast({ title: 'Gagal memuat pillow protector', description: ppRes.error.message, variant: 'destructive' });
       setLoading(false);
       return;
     }
@@ -143,21 +149,67 @@ export default function PillowProtectorPage() {
         toast({ title: newStatus === 'done' ? 'Done' : 'Pending', description: `Room ${room.room_number}` });
       }
     } else {
-      const { error } = await supabase.from('inventory_pillow_protector').insert({
-        room_id: room.id,
-        status: 'done',
-        done_by: user.id,
-        done_at: new Date().toISOString(),
-        period_month: periodMonth,
-        period_year: periodYear,
-        created_by: user.id,
-      });
+      const { error } = await supabase
+        .from('inventory_pillow_protector')
+        .upsert(
+          {
+            room_id: room.id,
+            status: 'done',
+            done_by: user.id,
+            done_at: new Date().toISOString(),
+            period_month: periodMonth,
+            period_year: periodYear,
+            created_by: user.id,
+          },
+          { onConflict: 'room_id,period_month,period_year' }
+        );
       if (error) {
         toast({ title: 'Gagal simpan', description: error.message, variant: 'destructive' });
       } else {
         toast({ title: 'Done', description: `Room ${room.room_number}` });
       }
     }
+    setUpdating(null);
+    fetchData();
+  }
+
+  async function saveRemarks(room: RoomWithPP, value: string) {
+    if (!user || !canEdit) return;
+    setUpdating(room.id);
+    const existing = room.pillow_protector?.[0];
+    const remarks = value.trim() || null;
+
+    if (existing) {
+      const { error } = await supabase
+        .from('inventory_pillow_protector')
+        .update({ remarks })
+        .eq('id', existing.id);
+      if (error) {
+        toast({ title: 'Gagal simpan remarks', description: error.message, variant: 'destructive' });
+        setUpdating(null);
+        return;
+      }
+    } else {
+      const { error } = await supabase
+        .from('inventory_pillow_protector')
+        .upsert(
+          {
+            room_id: room.id,
+            status: 'pending',
+            remarks,
+            period_month: periodMonth,
+            period_year: periodYear,
+            created_by: user.id,
+          },
+          { onConflict: 'room_id,period_month,period_year' }
+        );
+      if (error) {
+        toast({ title: 'Gagal simpan remarks', description: error.message, variant: 'destructive' });
+        setUpdating(null);
+        return;
+      }
+    }
+    toast({ title: 'Remarks tersimpan', description: `Room ${room.room_number}` });
     setUpdating(null);
     fetchData();
   }
