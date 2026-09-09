@@ -315,3 +315,23 @@ export const DEFAULT_ASET_AREA_LOCATIONS = [
   'tanaman santan,foye',
   'dusbin area',
 ] as const;
+
+// ============================================================================
+// Inventory Pillow Protector — 1 row per room per period
+// Tracks cleaning status of pillow protectors (Date / Status / Done by)
+// ============================================================================
+export interface InventoryPillowProtector {
+  id: string;
+  room_id: string;
+  status: 'pending' | 'done' | 'issue';
+  done_by: string | null;
+  done_at: string | null;
+  notes: string | null;
+  period_month: number;
+  period_year: number;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  rooms?: Room | null;
+  profiles?: { name: string } | null;
+}

@@ -10,6 +10,7 @@ import {
   syncInventoryMatrixToSheet,
   syncInventoryAsetRoomToSheet,
   syncInventoryAsetAreaToSheet,
+  syncPillowProtectorToSheet,
 } from '@/lib/google';
 
 // ============================================================================
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest) {
     year?: number;
     mode?: 'duplicate' | 'write'; // default: 'write' (avoids Drive quota issues)
     targetSpreadsheetId?: string; // for 'write' mode — defaults to template ID
-    type?: 'sc' | 'gc' | 'equipment' | 'linen' | 'aset-room' | 'aset-area';
+    type?: 'sc' | 'gc' | 'equipment' | 'linen' | 'aset-room' | 'aset-area' | 'pillow-protector';
     date?: string; // for 'gc' mode — YYYY-MM-DD, defaults to today
   };
   try {
@@ -428,6 +429,58 @@ export async function POST(req: NextRequest) {
       sheetName: monthlyDup.asetAreaSheetName,
       cellsWritten: syncResult.cellsWritten ?? 0,
       type: 'aset-area',
+      mode,
+    });
+  }
+
+  // === PILLOW PROTECTOR SYNC ===
+  if (type === 'pillow-protector') {
+    // Fetch all pillow protector records with room + profile data
+    const { data: ppData, error: ppErr } = await supabase
+      .from('inventory_pillow_protector')
+      .select(`
+        id, status, done_at,
+        rooms!inner(room_number, room_types(name)),
+        profiles(name)
+      `)
+      .eq('period_month', new Date().getMonth() + 1)
+      .eq('period_year', new Date().getFullYear());
+
+    if (ppErr) {
+      return NextResponse.json(
+        { success: false, error: `Failed to fetch pillow protector data: ${ppErr.message}`, spreadsheetId: targetSheetId, spreadsheetUrl: targetSheetUrl },
+        { status: 500 }
+      );
+    }
+
+    const ppRecords = (ppData ?? []).map((r: any) => ({
+      room_number: String(r.rooms?.room_number ?? ''),
+      room_type: Array.isArray(r.rooms?.room_types) ? r.rooms.room_types[0]?.name ?? '' : r.rooms?.room_types?.name ?? '',
+      status: r.status,
+      done_at: r.done_at,
+      done_by_name: r.profiles?.name ?? null,
+    }));
+
+    const syncResult = await syncPillowProtectorToSheet({
+      spreadsheetId: targetSheetId,
+      targetSheetName: monthlyDup.pillowProtectorSheetName,
+      records: ppRecords,
+    });
+
+    if (!syncResult.success) {
+      return NextResponse.json(
+        { success: false, error: syncResult.error, spreadsheetId: targetSheetId, spreadsheetUrl: targetSheetUrl, warning: 'Spreadsheet accessible but pillow protector data could not be written.' },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      spreadsheetId: targetSheetId,
+      spreadsheetUrl: targetSheetUrl,
+      sheetName: monthlyDup.pillowProtectorSheetName,
+      roomsWritten: syncResult.roomsWritten ?? 0,
+      type: 'pillow-protector',
       mode,
     });
   }

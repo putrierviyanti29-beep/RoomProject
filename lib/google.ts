@@ -633,6 +633,7 @@ export interface MonthlyDupResult {
   asetRoomSheetName?: string;
   asetAreaSheetName?: string;
   equipmentSheetName?: string;
+  pillowProtectorSheetName?: string;
   error?: string;
 }
 
@@ -654,7 +655,7 @@ export async function duplicateTemplateForCurrentMonth(params: {
 
   // Template → monthly suffix mapping
   const templates: Array<{
-    key: 'sc' | 'gc' | 'linen' | 'asetRoom' | 'asetArea' | 'equipment';
+    key: 'sc' | 'gc' | 'linen' | 'asetRoom' | 'asetArea' | 'equipment' | 'pillowProtector';
     nameField: keyof Omit<MonthlyDupResult, 'success' | 'error'>;
     matchKeywords: string[]; // any of these keywords in title → match
     suffix: string; // e.g. "- SC"
@@ -665,6 +666,7 @@ export async function duplicateTemplateForCurrentMonth(params: {
     { key: 'asetRoom', nameField: 'asetRoomSheetName', matchKeywords: ['aset', 'asset', 'room'], suffix: ' - AsetRoom' },
     { key: 'asetArea', nameField: 'asetAreaSheetName', matchKeywords: ['aset', 'asset', 'area'], suffix: ' - AsetArea' },
     { key: 'equipment', nameField: 'equipmentSheetName', matchKeywords: ['equipment'], suffix: ' - Equipment' },
+    { key: 'pillowProtector', nameField: 'pillowProtectorSheetName', matchKeywords: ['pillow', 'protector'], suffix: ' - PillowProtector' },
   ];
 
   try {
@@ -1173,4 +1175,130 @@ export async function syncInventoryAsetAreaToSheet(params: {
     ...params,
     sheetNameKeyword: 'aset',
   });
+}
+
+/**
+ * Syncs Pillow Protector data into a sheet (duplicated monthly template).
+ * Template: 1 row per room with Date/Status/Done by columns.
+ */
+export async function syncPillowProtectorToSheet(params: {
+  spreadsheetId: string;
+  targetSheetName?: string;
+  records: Array<{
+    room_number: string;
+    room_type: string;
+    status: string;
+    done_at: string | null;
+    done_by_name: string | null;
+  }>;
+}): Promise<SyncResult & { roomsWritten?: number }> {
+  const env = getGoogleEnv();
+  if (!env) {
+    return { success: false, error: 'Google Service Account credentials are not configured.' };
+  }
+
+  const { spreadsheetId, targetSheetName, records } = params;
+
+  try {
+    const auth = getAuthClient(env);
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    let sheetName: string;
+    if (targetSheetName) {
+      const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
+      const found = (metaRes.data.sheets ?? []).find((s) => s.properties?.title === targetSheetName);
+      if (!found) return { success: false, error: `Sheet "${targetSheetName}" not found.` };
+      sheetName = targetSheetName;
+    } else {
+      const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
+      const found = (metaRes.data.sheets ?? []).find((s) => {
+        const title = (s.properties?.title ?? '').toLowerCase();
+        return title.includes('pillow') || title.includes('protector');
+      });
+      sheetName = found?.properties?.title ?? 'Sheet1';
+    }
+    const safeSheetName = /^[\w]+$/.test(sheetName) ? sheetName : `'${sheetName}'`;
+
+    const readRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${safeSheetName}!A1:G300`,
+    });
+    const existingValues: (string | null)[][] = readRes.data.values ?? [];
+
+    let headerRowIdx = -1;
+    for (let i = 0; i < existingValues.length; i++) {
+      const row = existingValues[i] ?? [];
+      for (let col = 0; col < row.length; col++) {
+        if (String(row[col] ?? '').trim().toLowerCase() === 'room number') {
+          headerRowIdx = i;
+          break;
+        }
+      }
+      if (headerRowIdx >= 0) break;
+    }
+    if (headerRowIdx === -1) {
+      return { success: false, error: 'Could not find "Room Number" header row.' };
+    }
+
+    const headerRow = existingValues[headerRowIdx] ?? [];
+    let protectorCol = -1;
+    for (let col = 0; col < headerRow.length; col++) {
+      if (String(headerRow[col] ?? '').trim().toLowerCase() === 'protector') {
+        protectorCol = col;
+        break;
+      }
+    }
+    if (protectorCol === -1) {
+      return { success: false, error: 'Could not find PROTECTOR column in header row.' };
+    }
+
+    const roomNumberToRow: Record<string, number> = {};
+    for (let i = headerRowIdx + 1; i < existingValues.length; i++) {
+      const cellVal = String(existingValues[i]?.[1] ?? '').trim();
+      if (/^\d+$/.test(cellVal)) {
+        roomNumberToRow[cellVal] = i;
+      }
+    }
+
+    const dataUpdates: { range: string; values: (string | number)[][] }[] = [];
+    let roomsWritten = 0;
+
+    records.forEach((rec) => {
+      const rowIdx = roomNumberToRow[rec.room_number];
+      if (rowIdx === undefined) return;
+
+      const rowNumber = rowIdx + 1;
+      const dateCol = columnToLetter(protectorCol);
+      const statusCol = columnToLetter(protectorCol + 1);
+      const doneByCol = columnToLetter(protectorCol + 2);
+
+      const dateStr = rec.done_at ? new Date(rec.done_at).toLocaleDateString('en-US') : '';
+      const statusStr = rec.status === 'done' ? 'Done' : 'Pending';
+      const doneByStr = rec.status === 'done' ? (rec.done_by_name ?? '') : '';
+
+      dataUpdates.push({ range: `${safeSheetName}!${dateCol}${rowNumber}`, values: [[dateStr]] });
+      dataUpdates.push({ range: `${safeSheetName}!${statusCol}${rowNumber}`, values: [[statusStr]] });
+      dataUpdates.push({ range: `${safeSheetName}!${doneByCol}${rowNumber}`, values: [[doneByStr]] });
+      roomsWritten++;
+    });
+
+    if (dataUpdates.length === 0) {
+      return { success: false, error: 'No matching rooms found in sheet.' };
+    }
+
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { valueInputOption: 'RAW', data: dataUpdates },
+    });
+
+    return {
+      success: true,
+      newSpreadsheetId: spreadsheetId,
+      newSpreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+      roomsWritten,
+    };
+  } catch (err: any) {
+    console.error('syncPillowProtectorToSheet error:', err);
+    return { success: false, error: err?.message ?? 'Unknown Google API error' };
+  }
 }
